@@ -20,7 +20,8 @@
     "./app-config": "./src/app-config.ts",
     "./platform": "./src/platform.ts",
     "./unsplash": "./src/unsplash.ts",
-    "./notion-import": "./src/notion-import.ts"
+    "./notion-import": "./src/notion-import.ts",
+    "./s3-sync": "./src/s3-sync.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

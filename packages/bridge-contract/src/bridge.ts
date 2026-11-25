@@ -82,6 +82,12 @@ import type {
   UnsplashSearchResult
 } from './unsplash.js'
 import type {
+  S3SyncConflictChoice,
+  S3SyncRunResult,
+  S3SyncSettingsInput,
+  S3SyncStatus
+} from './s3-sync.js'
+import type {
   CloudAccountConnectResult,
   CloudAccountStatus,
   CloudBackupItemsPage,
@@ -230,6 +236,15 @@ export interface ZenBridge {
    *  no identifier. The caller checks the setting; the host refuses
    *  development builds and test runs, and sends each event once per run. */
   sendUsageCount?(event: 'install' | 'update'): Promise<void>
+  /** Sync this window's local vault with the person's own S3 bucket. A host
+   *  without it shows no S3 sync settings. Save checks the bucket, keeps the
+   *  secret key in system storage and runs the first sync. */
+  s3SyncStatus?(): Promise<S3SyncStatus>
+  s3SyncSave?(input: S3SyncSettingsInput): Promise<S3SyncRunResult>
+  s3SyncNow?(): Promise<S3SyncRunResult>
+  /** Stops syncing this vault and forgets the saved key. The bucket keeps its copy. */
+  s3SyncDisconnect?(): Promise<void>
+  s3SyncResolveConflict?(conflictId: string, choice: S3SyncConflictChoice): Promise<void>
   /** Unsplash photo search for the cover picker, sent straight to
    *  api.unsplash.com with the person's own access key. A host without it
    *  shows no Unsplash tab. Never rejects: a failure comes back as its reason. */

@@ -230,6 +230,13 @@ import {
   setRemoteWorkspaceHeaders,
   setRemoteWorkspaceSecret,
 } from "./secret-store";
+import {
+  canStoreSecretsSecurely as canStoreS3SecretsSecurely,
+  deleteS3SyncSecret,
+  getS3SyncSecret,
+  setS3SyncSecret,
+} from "./secret-store";
+import { S3SyncService } from "./s3-sync/service";
 import { CloudAuthManager, resolveCloudBaseUrl } from "./cloud-auth";
 import { shouldForceGnomeLibsecret } from "./linux-password-store";
 import { CloudAuthLoopbackServer } from "./cloud-auth-loopback";
@@ -3865,6 +3872,47 @@ const mirrorConnecting = new Map<string, Promise<RemoteServerClient | null>>();
  *  server switched to a vault the copy was not made from (Open Online). */
 const openOnlineOnce = new Set<string>();
 
+let s3SyncService: S3SyncService | null = null;
+
+/** S3 sync for local vaults: the person's own bucket, no server between. */
+function getS3SyncService(): S3SyncService {
+  s3SyncService ??= new S3SyncService({
+    storageDirectory: path.join(app.getPath("userData"), "s3-sync"),
+    secrets: {
+      get: getS3SyncSecret,
+      set: setS3SyncSecret,
+      delete: deleteS3SyncSecret,
+      canStore: canStoreS3SecretsSecurely,
+    },
+    // Two engines on one folder would each read the other's writes as edits.
+    syncsElsewhere: async (root) =>
+      (await getCloudSyncService().linkedVault(root).catch(() => null))
+        ? "This vault already syncs with ZenNotes Cloud. Unlink it there before syncing it with S3."
+        : null,
+    withWindowSync: (root, run) => cloudSyncWindowBarrier.run(root, run),
+  });
+  return s3SyncService;
+}
+
+/** The local vault this window shows, or why S3 sync cannot use it. */
+function s3SyncVaultRoot(): { root: string } | { reason: string } {
+  if (isRemoteWorkspaceActive()) return { reason: "S3 sync is for local vaults." };
+  const win = currentIpcWindow();
+  const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault;
+  if (!vault) return { reason: "Open a vault to sync it with S3." };
+  if (vault.mirrorOf || isRemoteMirrorPath(vault.root)) {
+    return { reason: "This window shows a server's offline copy, which syncs with that server." };
+  }
+  if (vault.temporary) return { reason: "Save this folder as a local vault before syncing it with S3." };
+  return { root: vault.root };
+}
+
+function requireS3SyncVaultRoot(): string {
+  const found = s3SyncVaultRoot();
+  if ("reason" in found) throw new Error(found.reason);
+  return found.root;
+}
+
 function getRemoteMirrorService(): RemoteMirrorSyncService {
   remoteMirrorService ??= new RemoteMirrorSyncService({
     storageDirectory: path.join(app.getPath("userData"), "remote-mirrors"),
@@ -4404,13 +4452,21 @@ function registerIpc(): void {
     if (mirror) return getRemoteMirrorService().link(mirror);
     return getCloudSyncService().linkedVault(requireLocalCloudVaultRoot());
   });
-  handle(IPC.CLOUD_VAULT_LINK_SET, (_event, vaultId: string) =>
-    getCloudSyncService().link(requireLocalCloudVaultRoot(), vaultId),
+  // Two engines on one folder would each read the other's writes as edits.
+  const requireCloudLinkableRoot = async (): Promise<string> => {
+    const root = requireLocalCloudVaultRoot();
+    if (await getS3SyncService().isConfigured(root)) {
+      throw new Error("This vault syncs with S3. Disconnect S3 sync before linking it to ZenNotes Cloud.");
+    }
+    return root;
+  };
+  handle(IPC.CLOUD_VAULT_LINK_SET, async (_event, vaultId: string) =>
+    getCloudSyncService().link(await requireCloudLinkableRoot(), vaultId),
   );
   handle(
     IPC.CLOUD_VAULT_LINK_CREATE,
-    (_event, name: string, options?: { encrypted?: boolean }) =>
-      getCloudSyncService().createAndLink(requireLocalCloudVaultRoot(), name, {
+    async (_event, name: string, options?: { encrypted?: boolean }) =>
+      getCloudSyncService().createAndLink(await requireCloudLinkableRoot(), name, {
         encrypted: options?.encrypted === true,
       }),
   );
@@ -4763,6 +4819,42 @@ function registerIpc(): void {
   handle(IPC.UNSPLASH_KEY_TEST, async () => await unsplash.test());
   handle(IPC.UNSPLASH_KEY_CLEAR, async () => {
     await unsplash.clear();
+  });
+  // The secret key goes in and never comes back out: status answers only
+  // whether one is saved.
+  handle(IPC.S3_SYNC_STATUS, async () => {
+    const found = s3SyncVaultRoot();
+    if ("reason" in found) {
+      return {
+        available: false,
+        unavailableReason: found.reason,
+        configured: false,
+        bucket: null,
+        region: null,
+        endpoint: null,
+        prefix: null,
+        forcePathStyle: false,
+        accessKeyId: null,
+        vaultName: null,
+        hasSecretKey: false,
+        canStoreSecurely: canStoreS3SecretsSecurely(),
+        lastSyncedAt: null,
+        lastError: null,
+        syncing: false,
+        conflicts: [],
+      };
+    }
+    return await getS3SyncService().status(found.root);
+  });
+  handle(IPC.S3_SYNC_SAVE, async (_e, input: unknown) =>
+    await getS3SyncService().save(requireS3SyncVaultRoot(), input),
+  );
+  handle(IPC.S3_SYNC_NOW, async () => await getS3SyncService().sync(requireS3SyncVaultRoot()));
+  handle(IPC.S3_SYNC_DISCONNECT, async () => {
+    await getS3SyncService().disconnect(requireS3SyncVaultRoot());
+  });
+  handle(IPC.S3_SYNC_RESOLVE_CONFLICT, async (_e, conflictId: unknown, choice: unknown) => {
+    await getS3SyncService().resolveConflict(requireS3SyncVaultRoot(), conflictId, choice);
   });
   handle(IPC.APP_UPDATER_CHECK_WITH_UI, async () => {
     await runMenuUpdateCheck();

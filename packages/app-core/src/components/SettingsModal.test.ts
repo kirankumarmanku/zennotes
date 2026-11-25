@@ -661,6 +661,13 @@ describe("SettingsModal date note directories", () => {
     Object.assign(window.zen, {
       getCapabilities: () => ({ supportsHarper: true }),
       setTaskReminders: vi.fn(),
+      // The desktop host syncs a vault with S3; its settings page has a row.
+      s3SyncStatus: vi.fn().mockResolvedValue({
+        available: true, unavailableReason: null, configured: false, bucket: null, region: null,
+        endpoint: null, prefix: null, forcePathStyle: false, accessKeyId: null, vaultName: null,
+        hasSecretKey: false, canStoreSecurely: true, lastSyncedAt: null, lastError: null,
+        syncing: false, conflicts: [],
+      }),
     });
     await act(async () => root.render(createElement(SettingsModal)));
     return vi.mocked(getSettingsSearchResults).mock

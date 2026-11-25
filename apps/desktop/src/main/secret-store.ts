@@ -529,6 +529,55 @@ export async function deleteUnsplashAccessKeySecret(): Promise<void> {
   })
 }
 
+const S3_SYNC_KEYTAR_SERVICE = 'ZenNotes S3 Sync'
+const S3_SYNC_FALLBACK_PREFIX = 's3-sync:'
+
+/**
+ * The secret access key one vault uses for its S3 bucket, keyed by the
+ * vault's fingerprint. Only in the OS-protected store: settings.json holds
+ * the bucket and the access key ID, never the secret.
+ */
+export async function getS3SyncSecret(id: string): Promise<string | null> {
+  const normalized = id.trim()
+  if (!normalized) return null
+  const keytar = await loadKeytar()
+  if (keytar) return keytar.getPassword(S3_SYNC_KEYTAR_SERVICE, normalized)
+  const encoded = (await loadFallbackSecrets())[`${S3_SYNC_FALLBACK_PREFIX}${normalized}`]
+  return encoded ? decodeSecret(encoded) : null
+}
+
+export async function setS3SyncSecret(id: string, secret: string): Promise<boolean> {
+  const normalized = id.trim()
+  const value = secret.trim()
+  if (!normalized || !value) return false
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.setPassword(S3_SYNC_KEYTAR_SERVICE, normalized, value)
+    return true
+  }
+  const encoded = encodeSecret(value)
+  if (!encoded) return false
+  await updateFallbackSecrets((fallback) => {
+    fallback[`${S3_SYNC_FALLBACK_PREFIX}${normalized}`] = encoded
+  })
+  return true
+}
+
+export async function deleteS3SyncSecret(id: string): Promise<void> {
+  const normalized = id.trim()
+  if (!normalized) return
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.deletePassword(S3_SYNC_KEYTAR_SERVICE, normalized)
+    return
+  }
+  const key = `${S3_SYNC_FALLBACK_PREFIX}${normalized}`
+  if (!(key in (await loadFallbackSecrets()))) return
+  await updateFallbackSecrets((fallback) => {
+    delete fallback[key]
+  })
+}
+
 /** Whether a secret saved now would be encrypted by the OS. */
 export function canStoreSecretsSecurely(): boolean {
   return safeStorage.isEncryptionAvailable()

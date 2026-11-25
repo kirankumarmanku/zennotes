@@ -20,6 +20,12 @@ import type {
   UnsplashSearchResult
 } from '@zennotes/bridge-contract/unsplash'
 import type {
+  S3SyncConflictChoice,
+  S3SyncRunResult,
+  S3SyncSettingsInput,
+  S3SyncStatus
+} from '@zennotes/bridge-contract/s3-sync'
+import type {
   NotionImportProgress,
   NotionImportStatus,
   NotionImportTokenResult,
@@ -341,6 +347,12 @@ const api: ZenBridge = {
   saveUnsplashKey: (key: string): Promise<UnsplashKeySaveResult> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_SAVE, key),
   testUnsplashKey: (): Promise<UnsplashKeyCheck> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_TEST),
   clearUnsplashKey: (): Promise<void> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_CLEAR),
+  s3SyncStatus: (): Promise<S3SyncStatus> => ipcRenderer.invoke(IPC.S3_SYNC_STATUS),
+  s3SyncSave: (input: S3SyncSettingsInput): Promise<S3SyncRunResult> => ipcRenderer.invoke(IPC.S3_SYNC_SAVE, input),
+  s3SyncNow: (): Promise<S3SyncRunResult> => ipcRenderer.invoke(IPC.S3_SYNC_NOW),
+  s3SyncDisconnect: (): Promise<void> => ipcRenderer.invoke(IPC.S3_SYNC_DISCONNECT),
+  s3SyncResolveConflict: (conflictId: string, choice: S3SyncConflictChoice): Promise<void> =>
+    ipcRenderer.invoke(IPC.S3_SYNC_RESOLVE_CONFLICT, conflictId, choice),
   checkForAppUpdatesWithUi: (): Promise<void> =>
     ipcRenderer.invoke(IPC.APP_UPDATER_CHECK_WITH_UI),
   downloadAppUpdate: (): Promise<AppUpdateState> => ipcRenderer.invoke(IPC.APP_UPDATER_DOWNLOAD),

@@ -203,6 +203,7 @@ import { unsplashKeySupported } from "../lib/unsplash-key";
 import { laneFieldLabel } from "../lib/kanban-lanes";
 import type { KanbanLaneBy } from "../store";
 import { UnsplashKeySetting } from "./UnsplashKeySetting";
+import { S3SyncSettings, s3SyncSupported } from "./S3SyncSettings";
 import { normalizeApplicationSchemes } from "@shared/application-links";
 import {
   HEADING_COLOR_SWATCHES,
@@ -223,6 +224,7 @@ type SettingsCategoryId =
   | "typography"
   | "vault"
   | "cloud"
+  | "s3"
   | "templates"
   | "mcp"
   | "cli"
@@ -319,6 +321,13 @@ const SETTINGS_CATEGORY_ICONS: Record<SettingsCategoryId, JSX.Element> = {
       <path d="m9.5 14 2.5-2.5 2.5 2.5M12 11.5V18" />
     </NavIcon>
   ),
+  s3: (
+    <NavIcon>
+      <ellipse cx="12" cy="6" rx="8" ry="3" />
+      <path d="M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6" />
+      <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+    </NavIcon>
+  ),
   templates: (
     <NavIcon>
       <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -360,7 +369,7 @@ const SETTINGS_SECTIONS: {
     title: "Editing",
     categoryIds: ["editor", "tasks", "keymaps"],
   },
-  { id: "vault", title: "Vault", categoryIds: ["vault", "cloud", "templates"] },
+  { id: "vault", title: "Vault", categoryIds: ["vault", "cloud", "s3", "templates"] },
   { id: "system", title: "System", categoryIds: ["mcp", "cli", "about"] },
 ];
 
@@ -4430,6 +4439,31 @@ export function SettingsModal(): JSX.Element {
                   revealVault={cloudVaultReveal}
                   onVaultRevealed={settleCloudVaultReveal}
                 />
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...(s3SyncSupported()
+      ? [
+          {
+            id: "s3" as const,
+            title: "S3 sync",
+            description:
+              "Sync this vault with your own S3 bucket, with no server in between.",
+            keywords: ["s3", "aws", "bucket", "r2", "minio", "sync", "backup"],
+            searchItems: [
+              {
+                id: "s3-sync",
+                title: "S3 bucket sync",
+                description:
+                  "Connect a bucket, sync now, and pick a version when a note changed on two computers.",
+                keywords: ["s3", "aws", "bucket", "access key", "conflict"],
+              },
+            ],
+            content: (
+              <div {...settingsSearchTargetProps("s3-sync")}>
+                <S3SyncSettings localVaultName={vault?.name ?? "Notes"} />
               </div>
             ),
           },
