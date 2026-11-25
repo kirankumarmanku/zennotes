@@ -204,6 +204,7 @@ import { laneFieldLabel } from "../lib/kanban-lanes";
 import type { KanbanLaneBy } from "../store";
 import { UnsplashKeySetting } from "./UnsplashKeySetting";
 import { S3SyncSettings, s3SyncSupported } from "./S3SyncSettings";
+import { CalendarFeedsSettings, calendarFeedsSettingsSupported } from "./CalendarFeedsSettings";
 import { normalizeApplicationSchemes } from "@shared/application-links";
 import {
   HEADING_COLOR_SWATCHES,
@@ -225,6 +226,7 @@ type SettingsCategoryId =
   | "vault"
   | "cloud"
   | "s3"
+  | "calendars"
   | "templates"
   | "mcp"
   | "cli"
@@ -328,6 +330,12 @@ const SETTINGS_CATEGORY_ICONS: Record<SettingsCategoryId, JSX.Element> = {
       <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
     </NavIcon>
   ),
+  calendars: (
+    <NavIcon>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4M8 14h4" />
+    </NavIcon>
+  ),
   templates: (
     <NavIcon>
       <rect x="4" y="4" width="16" height="16" rx="2" />
@@ -369,7 +377,7 @@ const SETTINGS_SECTIONS: {
     title: "Editing",
     categoryIds: ["editor", "tasks", "keymaps"],
   },
-  { id: "vault", title: "Vault", categoryIds: ["vault", "cloud", "s3", "templates"] },
+  { id: "vault", title: "Vault", categoryIds: ["vault", "cloud", "s3", "calendars", "templates"] },
   { id: "system", title: "System", categoryIds: ["mcp", "cli", "about"] },
 ];
 
@@ -4464,6 +4472,31 @@ export function SettingsModal(): JSX.Element {
             content: (
               <div {...settingsSearchTargetProps("s3-sync")}>
                 <S3SyncSettings localVaultName={vault?.name ?? "Notes"} />
+              </div>
+            ),
+          },
+        ]
+      : []),
+    ...(calendarFeedsSettingsSupported()
+      ? [
+          {
+            id: "calendars" as const,
+            title: "Calendars",
+            description:
+              "Show your meetings in the calendar panel and start notes on them.",
+            keywords: ["calendar", "meetings", "ics", "ical", "google", "outlook", "invite"],
+            searchItems: [
+              {
+                id: "calendar-feeds",
+                title: "Calendars for meeting notes",
+                description:
+                  "Add a calendar by its .ics address, or remove one.",
+                keywords: ["calendar", "ics", "webcal", "meeting notes", "attendees"],
+              },
+            ],
+            content: (
+              <div {...settingsSearchTargetProps("calendar-feeds")}>
+                <CalendarFeedsSettings />
               </div>
             ),
           },

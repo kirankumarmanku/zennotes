@@ -21,7 +21,8 @@
     "./platform": "./src/platform.ts",
     "./unsplash": "./src/unsplash.ts",
     "./notion-import": "./src/notion-import.ts",
-    "./s3-sync": "./src/s3-sync.ts"
+    "./s3-sync": "./src/s3-sync.ts",
+    "./calendar": "./src/calendar.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",

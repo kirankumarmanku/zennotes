@@ -235,8 +235,12 @@ import {
   deleteS3SyncSecret,
   getS3SyncSecret,
   setS3SyncSecret,
+  deleteCalendarFeedSecret,
+  getCalendarFeedSecret,
+  setCalendarFeedSecret,
 } from "./secret-store";
 import { S3SyncService } from "./s3-sync/service";
+import { CalendarFeedsService } from "./calendar-feeds";
 import { CloudAuthManager, resolveCloudBaseUrl } from "./cloud-auth";
 import { shouldForceGnomeLibsecret } from "./linux-password-store";
 import { CloudAuthLoopbackServer } from "./cloud-auth-loopback";
@@ -3894,6 +3898,21 @@ function getS3SyncService(): S3SyncService {
   return s3SyncService;
 }
 
+let calendarFeedsService: CalendarFeedsService | null = null;
+
+/** The person's calendars, read-only, for notes on meetings. */
+function getCalendarFeedsService(): CalendarFeedsService {
+  calendarFeedsService ??= new CalendarFeedsService({
+    storageDirectory: path.join(app.getPath("userData"), "calendar-feeds"),
+    secrets: {
+      get: getCalendarFeedSecret,
+      set: setCalendarFeedSecret,
+      delete: deleteCalendarFeedSecret,
+    },
+  });
+  return calendarFeedsService;
+}
+
 /** The local vault this window shows, or why S3 sync cannot use it. */
 function s3SyncVaultRoot(): { root: string } | { reason: string } {
   if (isRemoteWorkspaceActive()) return { reason: "S3 sync is for local vaults." };
@@ -4856,6 +4875,18 @@ function registerIpc(): void {
   handle(IPC.S3_SYNC_RESOLVE_CONFLICT, async (_e, conflictId: unknown, choice: unknown) => {
     await getS3SyncService().resolveConflict(requireS3SyncVaultRoot(), conflictId, choice);
   });
+  // A feed's address goes in and never comes back out: the list names only
+  // the calendar and its host.
+  handle(IPC.CALENDAR_FEEDS_LIST, async () => await getCalendarFeedsService().list());
+  handle(IPC.CALENDAR_FEED_ADD, async (_e, name: unknown, address: unknown) =>
+    await getCalendarFeedsService().add(name, address),
+  );
+  handle(IPC.CALENDAR_FEED_REMOVE, async (_e, id: unknown) => {
+    await getCalendarFeedsService().remove(id);
+  });
+  handle(IPC.CALENDAR_MEETINGS, async (_e, fromIso: unknown, toIso: unknown) =>
+    await getCalendarFeedsService().meetings(fromIso, toIso),
+  );
   handle(IPC.APP_UPDATER_CHECK_WITH_UI, async () => {
     await runMenuUpdateCheck();
   });

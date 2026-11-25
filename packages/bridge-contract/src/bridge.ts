@@ -87,6 +87,7 @@ import type {
   S3SyncSettingsInput,
   S3SyncStatus
 } from './s3-sync.js'
+import type { CalendarFeedSummary, CalendarMeetingsResult } from './calendar.js'
 import type {
   CloudAccountConnectResult,
   CloudAccountStatus,
@@ -245,6 +246,14 @@ export interface ZenBridge {
   /** Stops syncing this vault and forgets the saved key. The bucket keeps its copy. */
   s3SyncDisconnect?(): Promise<void>
   s3SyncResolveConflict?(conflictId: string, choice: S3SyncConflictChoice): Promise<void>
+  /** The person's calendar feeds (.ics addresses), read-only, for notes on
+   *  meetings. A host without them shows no meetings in the calendar panel. */
+  calendarFeeds?(): Promise<CalendarFeedSummary[]>
+  /** Checks the address answers with a calendar before keeping it. */
+  addCalendarFeed?(name: string, address: string): Promise<CalendarFeedSummary>
+  removeCalendarFeed?(id: string): Promise<void>
+  /** Meetings that overlap [fromIso, toIso), from every feed. */
+  calendarMeetings?(fromIso: string, toIso: string): Promise<CalendarMeetingsResult>
   /** Unsplash photo search for the cover picker, sent straight to
    *  api.unsplash.com with the person's own access key. A host without it
    *  shows no Unsplash tab. Never rejects: a failure comes back as its reason. */

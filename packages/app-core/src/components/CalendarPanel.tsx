@@ -53,6 +53,12 @@ import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { LazyNoteHoverPreview as NoteHoverPreview } from './LazyNoteHoverPreview'
 import { buildTaskMenuItems } from '../lib/task-context-menu'
 import { taskTail } from '../lib/task-tail'
+import {
+  findMeetingNote,
+  groupMeetingsByDay,
+  meetingTimeLabel,
+  useCalendarMeetings,
+} from '../lib/calendar-meetings'
 
 const FULL_DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const HOVER_DELAY_MS = 280
@@ -100,6 +106,7 @@ export function CalendarPanel({
   const addTaskForDate = useStore((s) => s.addTaskForDate)
   const toggleTaskFromList = useStore((s) => s.toggleTaskFromList)
   const storeOpenTask = useStore((s) => s.openTaskAt)
+  const openMeetingNote = useStore((s) => s.openMeetingNote)
   const onOpenRef = useRef(onOpen)
   onOpenRef.current = onOpen
   const openDailyNoteForDate = useCallback(
@@ -227,6 +234,9 @@ export function CalendarPanel({
       (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)
     )
   }, [selectedDate, firstDay])
+  // Meetings from the person's calendars for the agenda's week, read-only.
+  const weekMeetings = useCalendarMeetings(weekDays[0], weekDays[6])
+  const meetingsByDay = useMemo(() => groupMeetingsByDay(weekMeetings.meetings), [weekMeetings.meetings])
   const weekRangeLabel = useMemo(() => {
     const start = weekDays[0]
     const end = weekDays[6]
@@ -1177,6 +1187,7 @@ export function CalendarPanel({
             {weekDays.map((day) => {
               const iso = isoDateStr(day)
               const dayTasks = tasksDueOn(inferredTasks, iso)
+              const dayMeetings = meetingsByDay.get(iso) ?? []
               const isSel = iso === selectedIso
               const isDragOver = dragOverIso === iso
               return (
@@ -1226,6 +1237,45 @@ export function CalendarPanel({
                       </span>
                     )}
                   </button>
+                  {dayMeetings.length > 0 && (
+                    <div className="mt-0.5 space-y-0.5" data-cal-agenda-meetings>
+                      {dayMeetings.map((meeting) => {
+                        const existing = findMeetingNote(notes, settings, meeting)
+                        const people = meeting.attendees.length
+                        return (
+                          <button
+                            key={`${meeting.feedId}:${meeting.key}`}
+                            type="button"
+                            data-cal-meeting={meeting.key}
+                            onClick={() => void openMeetingNote(meeting)}
+                            title={[
+                              meeting.title,
+                              meeting.location,
+                              people ? `${people} ${people === 1 ? 'guest' : 'guests'}` : null,
+                              meeting.feedName,
+                              existing ? 'Open the meeting note' : 'Start a meeting note',
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                            className="group flex w-full items-center gap-2 rounded px-1.5 py-0.5 text-left text-xs text-ink-700 transition-colors hover:bg-paper-200/60"
+                          >
+                            <span className="w-14 shrink-0 tabular-nums text-2xs text-ink-400">
+                              {meetingTimeLabel(meeting)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate">{meeting.title}</span>
+                            <span
+                              className={[
+                                'shrink-0 text-2xs',
+                                existing ? 'text-accent' : 'text-ink-400 opacity-0 group-hover:opacity-100',
+                              ].join(' ')}
+                            >
+                              {existing ? 'Note' : '+ Note'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                   {dayTasks.length > 0 && (
                     <div className="mt-0.5 space-y-0.5">
                       {dayTasks.map((task, ti) => {

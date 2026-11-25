@@ -98,6 +98,9 @@ import {
 } from '@shared/databases'
 import { KANBAN_DATABASE_TITLE, kanbanDatabaseSeed } from '@shared/database-csv'
 import { parseFrontmatter } from '@shared/template-files'
+import type { CalendarEvent } from '@shared/calendar-ics'
+import { findMeetingNote } from './lib/calendar-meetings'
+import { DEFAULT_MEETING_NOTES_FOLDER, meetingNoteBody, meetingNoteTitle } from '@shared/meeting-notes'
 import { recordTitle, composePageBody, planRecordPages, recordPageToAdopt } from './lib/database-cells'
 import { applyManualMove, manualOrderCompare, parentDirOf } from './lib/manual-order'
 import { TAGS_TAB_PATH, isTagsTabPath } from '@shared/tags'
@@ -4576,6 +4579,10 @@ interface Store {
    *  WITHOUT navigating to it. Returns its meta, or null if daily notes are
    *  disabled or creation failed. */
   ensureDailyNoteForDate: (date: Date) => Promise<NoteMeta | null>
+  /** Open the note for a calendar meeting, making it first in the Meetings
+   *  folder with the meeting's time, place and people filled in. Reads the
+   *  meeting only: no invite is sent or changed. */
+  openMeetingNote: (meeting: CalendarEvent) => Promise<NoteMeta | null>
   /** Append a `- [ ] …` task to the daily note for `dateIso` (YYYY-MM-DD),
    *  prompting to create that daily note first if it doesn't exist. */
   addTaskForDate: (dateIso: string, text: string) => Promise<void>
@@ -11143,6 +11150,32 @@ export const useStore = create<Store>((set, get) => {
       console.error('ensureDailyNoteForDate failed', err)
       return null
     }
+  }),
+
+  openMeetingNote: trackNoteWrite(null, async (meeting) => {
+    const settings = normalizeVaultSettings(get().vaultSettings)
+    const title = meetingNoteTitle(meeting)
+    let note = findMeetingNote(get().notes, settings, meeting)
+    if (!note) {
+      // A vault template named "Meeting" replaces the default sections.
+      const template = get().customTemplates.find((t) => t.name.trim().toLowerCase() === 'meeting')
+      const templateBody = template ? renderTemplate(template.body, { title, now: new Date() }).body : undefined
+      try {
+        const meta = await window.zen.createNote('inbox', title, DEFAULT_MEETING_NOTES_FOLDER)
+        rememberEditModeForCreatedNote(meta.path)
+        set((s) => ({ notes: s.notes.some((n) => n.path === meta.path) ? s.notes : [...s.notes, meta] }))
+        await window.zen.writeNote(meta.path, meetingNoteBody(meeting, { template: templateBody }))
+        emitNoteEvent('note-created', meta.path)
+        await get().refreshNotes()
+        note = get().notes.find((n) => n.path === meta.path) ?? meta
+      } catch (err) {
+        console.error('openMeetingNote failed', err)
+        return null
+      }
+    }
+    await get().selectNote(note.path)
+    requestEditorFocus({ read: false })
+    return note
   }),
 
   addTaskForDate: trackNoteWrite(undefined, async (dateIso, text) => {

@@ -25,6 +25,7 @@ import type {
   S3SyncSettingsInput,
   S3SyncStatus
 } from '@zennotes/bridge-contract/s3-sync'
+import type { CalendarFeedSummary, CalendarMeetingsResult } from '@zennotes/bridge-contract/calendar'
 import type {
   NotionImportProgress,
   NotionImportStatus,
@@ -347,6 +348,12 @@ const api: ZenBridge = {
   saveUnsplashKey: (key: string): Promise<UnsplashKeySaveResult> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_SAVE, key),
   testUnsplashKey: (): Promise<UnsplashKeyCheck> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_TEST),
   clearUnsplashKey: (): Promise<void> => ipcRenderer.invoke(IPC.UNSPLASH_KEY_CLEAR),
+  calendarFeeds: (): Promise<CalendarFeedSummary[]> => ipcRenderer.invoke(IPC.CALENDAR_FEEDS_LIST),
+  addCalendarFeed: (name: string, address: string): Promise<CalendarFeedSummary> =>
+    ipcRenderer.invoke(IPC.CALENDAR_FEED_ADD, name, address),
+  removeCalendarFeed: (id: string): Promise<void> => ipcRenderer.invoke(IPC.CALENDAR_FEED_REMOVE, id),
+  calendarMeetings: (fromIso: string, toIso: string): Promise<CalendarMeetingsResult> =>
+    ipcRenderer.invoke(IPC.CALENDAR_MEETINGS, fromIso, toIso),
   s3SyncStatus: (): Promise<S3SyncStatus> => ipcRenderer.invoke(IPC.S3_SYNC_STATUS),
   s3SyncSave: (input: S3SyncSettingsInput): Promise<S3SyncRunResult> => ipcRenderer.invoke(IPC.S3_SYNC_SAVE, input),
   s3SyncNow: (): Promise<S3SyncRunResult> => ipcRenderer.invoke(IPC.S3_SYNC_NOW),

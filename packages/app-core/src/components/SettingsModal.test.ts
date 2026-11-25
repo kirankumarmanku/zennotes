@@ -668,6 +668,8 @@ describe("SettingsModal date note directories", () => {
         hasSecretKey: false, canStoreSecurely: true, lastSyncedAt: null, lastError: null,
         syncing: false, conflicts: [],
       }),
+      // And it reads calendars for meeting notes.
+      calendarFeeds: vi.fn().mockResolvedValue([]),
     });
     await act(async () => root.render(createElement(SettingsModal)));
     return vi.mocked(getSettingsSearchResults).mock

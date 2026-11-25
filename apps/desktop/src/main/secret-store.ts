@@ -578,6 +578,54 @@ export async function deleteS3SyncSecret(id: string): Promise<void> {
   })
 }
 
+const CALENDAR_FEED_KEYTAR_SERVICE = 'ZenNotes Calendar Feeds'
+const CALENDAR_FEED_FALLBACK_PREFIX = 'calendar-feed:'
+
+/**
+ * A calendar feed's .ics address. Google's "secret address" reads the whole
+ * calendar for whoever holds it, so it is kept like a password.
+ */
+export async function getCalendarFeedSecret(id: string): Promise<string | null> {
+  const normalized = id.trim()
+  if (!normalized) return null
+  const keytar = await loadKeytar()
+  if (keytar) return keytar.getPassword(CALENDAR_FEED_KEYTAR_SERVICE, normalized)
+  const encoded = (await loadFallbackSecrets())[`${CALENDAR_FEED_FALLBACK_PREFIX}${normalized}`]
+  return encoded ? decodeSecret(encoded) : null
+}
+
+export async function setCalendarFeedSecret(id: string, address: string): Promise<boolean> {
+  const normalized = id.trim()
+  const value = address.trim()
+  if (!normalized || !value) return false
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.setPassword(CALENDAR_FEED_KEYTAR_SERVICE, normalized, value)
+    return true
+  }
+  const encoded = encodeSecret(value)
+  if (!encoded) return false
+  await updateFallbackSecrets((fallback) => {
+    fallback[`${CALENDAR_FEED_FALLBACK_PREFIX}${normalized}`] = encoded
+  })
+  return true
+}
+
+export async function deleteCalendarFeedSecret(id: string): Promise<void> {
+  const normalized = id.trim()
+  if (!normalized) return
+  const keytar = await loadKeytar()
+  if (keytar) {
+    await keytar.deletePassword(CALENDAR_FEED_KEYTAR_SERVICE, normalized)
+    return
+  }
+  const key = `${CALENDAR_FEED_FALLBACK_PREFIX}${normalized}`
+  if (!(key in (await loadFallbackSecrets()))) return
+  await updateFallbackSecrets((fallback) => {
+    delete fallback[key]
+  })
+}
+
 /** Whether a secret saved now would be encrypted by the OS. */
 export function canStoreSecretsSecurely(): boolean {
   return safeStorage.isEncryptionAvailable()
