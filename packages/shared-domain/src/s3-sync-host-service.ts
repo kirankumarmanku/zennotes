@@ -146,7 +146,8 @@ export class S3SyncHostService {
   // --- Status ------------------------------------------------------------
 
   async status(vault: S3SyncVaultRef): Promise<S3SyncStatus> {
-    const settings = await this.vaultSettings(vault)
+    const elsewhere = await this.dependencies.syncsElsewhere?.(vault).catch(() => null)
+    const settings = elsewhere ? null : await this.vaultSettings(vault)
     const hasSecretKey = settings
       ? !!(await this.dependencies.secrets.get(vault.key).catch(() => null))
       : false
@@ -162,8 +163,8 @@ export class S3SyncHostService {
       ]
     }
     return {
-      available: true,
-      unavailableReason: null,
+      available: !elsewhere,
+      unavailableReason: elsewhere ?? null,
       configured: !!settings,
       bucket: settings?.bucket ?? null,
       region: settings?.region ?? null,
@@ -264,6 +265,10 @@ export class S3SyncHostService {
     const existing = this.runs.get(vault.key)
     if (existing) return existing
     const run = async (): Promise<CloudSyncRunSummary> => {
+      // Checked on every run, not only on save: a vault can start syncing
+      // another way later, and two syncs on one folder fight over every file.
+      const elsewhere = await this.dependencies.syncsElsewhere?.(vault)
+      if (elsewhere) throw new S3SyncInputError(elsewhere)
       const settings = await this.requireSettings(vault)
       return await this.exclusive(vault.key, () => this.runOnce(vault, settings))
     }

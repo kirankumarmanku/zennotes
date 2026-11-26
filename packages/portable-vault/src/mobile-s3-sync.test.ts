@@ -113,6 +113,10 @@ describe('mobile S3 sync', () => {
     void host
     const vault = new PortableVault('Notes', new MemoryVaultFileSystem('icloud/vault'))
     await assert.rejects(saveMobileS3Sync(vault, input), /iCloud Drive/)
+    await assert.rejects(syncMobileS3Vault(vault), /iCloud Drive/)
+    const status = await getMobileS3SyncStatus(vault)
+    assert.equal(status.available, false)
+    assert.match(status.unavailableReason ?? '', /iCloud Drive/)
     assert.equal(bucket.objects.size, 0)
   })
 
