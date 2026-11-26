@@ -128,4 +128,83 @@ describe('mobile S3 sync', () => {
     await assert.rejects(saveMobileS3Sync(phone.vault, input))
     assert.equal(bucket.objects.size, 0)
   })
+
+  describe('notes the older Zotly app left in the bucket', () => {
+    const NOTE = '0B1C2D3E-4F50-4A6B-8C7D-8E9FA0B1C2D3'
+    const DAILY = '1A2B3C4D-5E6F-4A8B-9C0D-1E2F3A4B5C6D'
+    const LOCKED = '2C3D4E5F-6071-4B8C-9DAE-BFC0D1E2F304'
+    const T0 = 1_763_000_000
+
+    async function oldAppBucket(): Promise<void> {
+      const entries = [
+        { timestamp: T0, operation: 'create', sectionID: NOTE, title: 'Groceries', content: 'milk\neggs', hlc: { millis: T0 * 1000, counter: 0 } },
+        { timestamp: T0 + 1, operation: 'create', sectionID: DAILY, title: '', content: 'standup', meetingKey: 'daily:2026-11-08', hlc: { millis: (T0 + 1) * 1000, counter: 0 } },
+        { timestamp: T0 + 2, operation: 'create', sectionID: LOCKED, title: 'Diary', content: 'secret\nlock:on', hlc: { millis: (T0 + 2) * 1000, counter: 0 } }
+      ]
+      const body = entries.map((entry) => JSON.stringify(entry).replace(/\//g, '\\/')).join('\n') + '\n'
+      await bucket.put('zotly/wal/MAC-OLD.jsonl', new TextEncoder().encode(body))
+      await bucket.put('zotly/wal/MAC-OLD.jsonl.meta', new TextEncoder().encode('{"seq":3}'))
+    }
+
+    it('brings them into the phone’s vault on the first sync and sends them through the bucket', async () => {
+      await oldAppBucket()
+      const phone = device('iPhone', 'phone/vault')
+      await phone.vault.fs.mkdir('inbox')
+
+      const first = await saveMobileS3Sync(phone.vault, input)
+      assert.equal(first.imported, 2)
+      assert.equal(first.importedLocked, 1)
+      assert.equal(await phone.vault.fs.readText('inbox/Groceries.md'), 'milk\neggs')
+      assert.equal(await phone.vault.fs.readText('inbox/Daily Notes/2026-11-08.md'), 'standup')
+      assert.equal(await phone.vault.fs.statVerified('inbox/Diary.md'), null)
+      assert.equal(first.pushed >= 2, true)
+
+      // The old app's objects stay; the new vault and the marker sit beside them.
+      const keys = [...bucket.objects.keys()]
+      assert.ok(keys.includes('zotly/wal/MAC-OLD.jsonl'))
+      assert.ok(keys.includes('zotly/vaults/notes/imports/zotly-app.json'), keys.join('\n'))
+
+      const status = await getMobileS3SyncStatus(phone.vault)
+      assert.equal(status.legacyImport?.notes, 2)
+      assert.equal(status.legacyImport?.locked, 1)
+
+      // Never twice on the same device.
+      await phone.vault.fs.deleteFile('inbox/Groceries.md')
+      const again = await syncMobileS3Vault(phone.vault)
+      assert.equal(again.imported, undefined)
+      assert.equal(await phone.vault.fs.statVerified('inbox/Groceries.md'), null)
+
+      // A second device gets them through the new vault, not a second import,
+      // so the note deleted on the phone stays deleted.
+      const mac = device('computer', 'mac/vault')
+      await mac.vault.fs.mkdir('inbox')
+      const joined = await saveMobileS3Sync(mac.vault, input)
+      assert.equal(joined.imported, 0)
+      assert.equal(await mac.vault.fs.readText('inbox/Daily Notes/2026-11-08.md'), 'standup')
+      assert.equal(await mac.vault.fs.statVerified('inbox/Groceries.md'), null)
+      assert.equal((await getMobileS3SyncStatus(mac.vault)).legacyImport?.elsewhere, true)
+    })
+
+    it('keeps a note already in the vault and puts the old one beside it', async () => {
+      await oldAppBucket()
+      const phone = device('iPhone', 'phone/vault')
+      phone.vault.fs.put('inbox/Groceries.md', 'my newer list')
+      const first = await saveMobileS3Sync(phone.vault, input)
+      assert.equal(first.imported, 2)
+      assert.equal(await phone.vault.fs.readText('inbox/Groceries.md'), 'my newer list')
+      assert.equal(await phone.vault.fs.readText('inbox/Groceries (old Zotly).md'), 'milk\neggs')
+    })
+
+    it('does nothing in a bucket the old app never used', async () => {
+      const phone = device('iPhone', 'phone/vault')
+      phone.vault.fs.put('inbox/a.md', 'a')
+      const first = await saveMobileS3Sync(phone.vault, input)
+      assert.equal(first.imported, 0)
+      assert.equal(
+        [...bucket.objects.keys()].some((key) => key.includes('/imports/')),
+        false
+      )
+    })
+  })
 })
+

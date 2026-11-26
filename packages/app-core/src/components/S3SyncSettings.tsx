@@ -39,12 +39,35 @@ function errorText(error: unknown): string {
   return raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 
-function summary(result: { pulled: number; pushed: number; conflicts: number }): string {
+function notes(count: number): string {
+  return count === 1 ? '1 note' : `${count} notes`
+}
+
+/** What a run did with the older Zotly app's notes, or ''. */
+function legacyImportText(imported: number | undefined, locked: number | undefined): string {
+  const parts: string[] = []
+  if (imported) parts.push(`Brought in ${notes(imported)} from the older Zotly app.`)
+  if (locked) {
+    parts.push(
+      `${notes(locked)} the older Zotly app had locked ${locked === 1 ? 'stays' : 'stay'} in the bucket and ${locked === 1 ? 'was' : 'were'} not copied here.`
+    )
+  }
+  return parts.join(' ')
+}
+
+function summary(result: {
+  pulled: number
+  pushed: number
+  conflicts: number
+  imported?: number
+  importedLocked?: number
+}): string {
   const parts = [`Sent ${result.pushed}`, `received ${result.pulled}`]
   const conflicts = result.conflicts
     ? ` ${result.conflicts === 1 ? '1 note needs' : `${result.conflicts} notes need`} you to pick a version below.`
     : ''
-  return `Synced. ${parts.join(', ')}.${conflicts}`
+  const legacy = legacyImportText(result.imported, result.importedLocked)
+  return `Synced. ${parts.join(', ')}.${conflicts}${legacy ? ` ${legacy}` : ''}`
 }
 
 /**

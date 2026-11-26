@@ -13,11 +13,17 @@ import type { CloudSyncCoordinator, CloudSyncRemote } from './cloud-sync-coordin
 import type { CloudSyncState } from './cloud-sync-engine'
 import {
   createS3HttpObjectStore,
+  S3PreconditionFailedError,
   S3RequestError,
   type S3Credentials,
   type S3ObjectStore
 } from './s3-object-store'
 import { createS3SyncRemote, ensureS3SyncVault, S3SyncError } from './s3-sync-remote'
+import {
+  readZotlyLegacyNotes,
+  ZOTLY_LEGACY_PREFIX,
+  zotlyLegacyFiles
+} from './zotly-legacy-import'
 
 /**
  * S3 sync for a local vault, the same on every host: the desktop app keeps
@@ -73,6 +79,29 @@ export interface S3SyncVaultSettings {
   /** First-sync clashes from the last run. The engine reports them per run,
    *  so they are kept here for the settings page between runs. */
   bootstrapConflicts: CloudSyncBootstrapConflict[]
+  /** Set once the older Zotly app's notes in this bucket were brought in
+   *  (by this device or, when the bucket says so, another). Absent in files
+   *  written before the import existed. */
+  legacyImport?: S3SyncLegacyImport | null
+}
+
+export interface S3SyncLegacyImport {
+  at: number
+  /** Notes this device wrote into the vault. */
+  notes: number
+  /** Notes the old app had locked, left in the bucket. */
+  locked: number
+  /** True when another device had already brought them in. */
+  elsewhere: boolean
+}
+
+/** The vault's own files, for bringing in the older Zotly app's notes. */
+export interface S3SyncVaultFiles {
+  /** Whether a file or folder is at this vault-relative path. */
+  exists(path: string): Promise<boolean>
+  readText(path: string): Promise<string | null>
+  /** Creates missing folders. */
+  writeText(path: string, content: string): Promise<void>
 }
 
 export interface S3SyncSettingsFile {
@@ -117,11 +146,23 @@ export interface S3SyncHostServiceDependencies {
   withRun?(vault: S3SyncVaultRef, run: () => Promise<CloudSyncRunSummary>): Promise<CloudSyncRunSummary>
   /** After a run or a conflict choice changed files, so the app reloads them. */
   afterChange?(vault: S3SyncVaultRef): Promise<void>
+  /** The vault's files. Without it, notes the older Zotly app left in the
+   *  bucket are not brought in. */
+  vaultFiles?(vault: S3SyncVaultRef): S3SyncVaultFiles | Promise<S3SyncVaultFiles>
+  /** For the days in daily and meeting note names; the device's own zone by default. */
+  timeZone?: string
   words?: S3SyncHostWords
   now?: () => number
 }
 
 const DEFAULT_PREFIX = 'zotly/'
+
+/** Written beside the vault in the bucket once the older Zotly app's notes
+ *  are in it, so a second device does not bring them in again (and bring
+ *  back a note someone has since deleted). */
+export function s3LegacyImportMarkerKey(prefix: string, vaultId: string): string {
+  return `${prefix}vaults/${vaultId}/imports/zotly-app.json`
+}
 
 export class S3SyncInputError extends Error {
   constructor(message: string) {
@@ -132,6 +173,7 @@ export class S3SyncInputError extends Error {
 
 export class S3SyncHostService {
   private readonly runs = new Map<string, Promise<S3SyncRunResult>>()
+  private readonly imported = new Map<string, S3SyncLegacyImport>()
   private readonly operations = new Map<string, Promise<unknown>>()
   private settingsWrite: Promise<unknown> = Promise.resolve()
   private settingsCache: S3SyncSettingsFile | null = null
@@ -179,7 +221,15 @@ export class S3SyncHostService {
       lastSyncedAt: settings?.lastSyncedAt ?? null,
       lastError: settings?.lastError ?? null,
       syncing: this.runs.has(vault.key),
-      conflicts
+      conflicts,
+      legacyImport: settings?.legacyImport
+        ? {
+            at: settings.legacyImport.at,
+            notes: settings.legacyImport.notes,
+            locked: settings.legacyImport.locked,
+            elsewhere: settings.legacyImport.elsewhere
+          }
+        : null
     }
   }
 
@@ -240,7 +290,8 @@ export class S3SyncHostService {
       vaultId,
       lastSyncedAt: current?.lastSyncedAt ?? null,
       lastError: null,
-      bootstrapConflicts: current?.bootstrapConflicts ?? []
+      bootstrapConflicts: current?.bootstrapConflicts ?? [],
+      legacyImport: current?.legacyImport ?? null
     }))
     return await this.sync(vault)
   }
@@ -273,12 +324,19 @@ export class S3SyncHostService {
       return await this.exclusive(vault.key, () => this.runOnce(vault, settings))
     }
     const running = (this.dependencies.withRun ? this.dependencies.withRun(vault, run) : run())
-      .then((summary) => ({
-        pulled: summary.pulled,
-        pushed: summary.pushed,
-        conflicts: (summary.pending_conflicts?.length ?? 0) + summary.bootstrap_conflicts.length
-      }))
-      .finally(() => this.runs.delete(vault.key))
+      .then((summary): S3SyncRunResult => {
+        const imported = this.imported.get(vault.key)
+        return {
+          pulled: summary.pulled,
+          pushed: summary.pushed,
+          conflicts: (summary.pending_conflicts?.length ?? 0) + summary.bootstrap_conflicts.length,
+          ...(imported ? { imported: imported.notes, importedLocked: imported.locked } : {})
+        }
+      })
+      .finally(() => {
+        this.runs.delete(vault.key)
+        this.imported.delete(vault.key)
+      })
     this.runs.set(vault.key, running)
     return running
   }
@@ -286,7 +344,31 @@ export class S3SyncHostService {
   private async runOnce(vault: S3SyncVaultRef, settings: S3SyncVaultSettings): Promise<CloudSyncRunSummary> {
     const coordinator = await this.coordinator(vault, settings)
     try {
-      const result = await coordinator.sync()
+      let result = await coordinator.sync()
+      // Never let the old app's notes stop a sync: a bucket key that may not
+      // read them, or a damaged log, leaves it to try again next run.
+      const brought = await this.bringInLegacyNotes(vault, settings).catch(() => null)
+      if (brought && brought.notes > 0) {
+        // Send what was just written, so the bucket's vault has it too.
+        const second = await (await this.coordinator(vault, settings)).sync()
+        result = {
+          ...second,
+          pulled: result.pulled + second.pulled,
+          pushed: result.pushed + second.pushed,
+          conflicts: [...result.conflicts, ...second.conflicts],
+          bootstrapConflicts: [...result.bootstrapConflicts, ...second.bootstrapConflicts],
+          localConflicts: [...result.localConflicts, ...second.localConflicts],
+          legacyConflictCopies: [...result.legacyConflictCopies, ...second.legacyConflictCopies],
+          refusedPaths: [...result.refusedPaths, ...second.refusedPaths]
+        }
+      }
+      if (brought) {
+        const { found, ...record } = brought
+        // Only a bucket the old app used gets the marker.
+        if (found && !record.elsewhere) await this.markLegacyImported(vault, settings)
+        this.imported.set(vault.key, record)
+        await this.updateSettings(vault, (current) => (current ? { ...current, legacyImport: record } : null))
+      }
       await this.updateSettings(vault, (current) =>
         current
           ? { ...current, lastSyncedAt: this.now(), lastError: null, bootstrapConflicts: result.bootstrapConflicts }
@@ -389,20 +471,81 @@ export class S3SyncHostService {
     })
   }
 
-  private async coordinator(vault: S3SyncVaultRef, settings: S3SyncVaultSettings): Promise<CloudSyncCoordinator> {
+  // --- The older Zotly app's notes ------------------------------------------
+
+  /**
+   * Bring the notes the older Zotly app left in this bucket into the vault,
+   * once. Runs after the first pull, so a note another device already
+   * brought in (and sent through the bucket) is on disk and is not written
+   * twice; a file that is there with other text keeps its text, and the old
+   * note goes beside it. Returns null when there is nothing to do this run.
+   */
+  private async bringInLegacyNotes(
+    vault: S3SyncVaultRef,
+    settings: S3SyncVaultSettings
+  ): Promise<(S3SyncLegacyImport & { found: boolean }) | null> {
+    if (settings.legacyImport || !this.dependencies.vaultFiles) return null
+    const store = await this.storeFor(vault, settings)
+    const at = this.now()
+    if (await store.get(s3LegacyImportMarkerKey(settings.prefix, settings.vaultId))) {
+      return { at, notes: 0, locked: 0, elsewhere: true, found: true }
+    }
+    const legacy = await readZotlyLegacyNotes(store, {
+      prefix: ZOTLY_LEGACY_PREFIX,
+      ...(this.dependencies.timeZone ? { timeZone: this.dependencies.timeZone } : {})
+    })
+    if (legacy.source === 'none') return { at, notes: 0, locked: 0, elsewhere: false, found: false }
+    const files = await this.dependencies.vaultFiles(vault)
+    const base = (await files.exists('inbox')) ? 'inbox' : ''
+    let written = 0
+    for (const file of zotlyLegacyFiles(legacy.notes, base, {
+      ...(this.dependencies.timeZone ? { timeZone: this.dependencies.timeZone } : {})
+    })) {
+      let path = file.path
+      if (await files.exists(path)) {
+        const existing = await files.readText(path)
+        if (existing === file.content) continue
+        path = path.replace(/\.md$/, ' (old Zotly).md')
+        if (await files.exists(path)) continue
+      }
+      await files.writeText(path, file.content)
+      written += 1
+    }
+    return { at, notes: written, locked: legacy.locked, elsewhere: false, found: true }
+  }
+
+  private async markLegacyImported(vault: S3SyncVaultRef, settings: S3SyncVaultSettings): Promise<void> {
+    const key = s3LegacyImportMarkerKey(settings.prefix, settings.vaultId)
+    const store = await this.storeFor(vault, settings)
+    const body = new TextEncoder().encode(
+      JSON.stringify({ format: 1, from: 'zotly-app', imported_at: new Date(this.now()).toISOString() })
+    )
+    try {
+      await store.put(key, body, { ifNoneMatch: '*', contentType: 'application/json' })
+    } catch (error) {
+      // Another device wrote it first: the same fact.
+      if (!(error instanceof S3PreconditionFailedError)) throw error
+    }
+  }
+
+  private async storeFor(vault: S3SyncVaultRef, settings: S3SyncVaultSettings): Promise<S3ObjectStore> {
     const secretAccessKey = await this.dependencies.secrets.get(vault.key)
     if (!secretAccessKey) {
       throw new S3SyncInputError(
         `The secret access key is missing from this ${this.device}. Paste it again in Settings.`
       )
     }
-    const store = this.store({
+    return this.store({
       bucket: settings.bucket,
       region: settings.region,
       endpoint: settings.endpoint,
       forcePathStyle: settings.forcePathStyle,
       credentials: { accessKeyId: settings.accessKeyId, secretAccessKey }
     })
+  }
+
+  private async coordinator(vault: S3SyncVaultRef, settings: S3SyncVaultSettings): Promise<CloudSyncCoordinator> {
+    const store = await this.storeFor(vault, settings)
     const remote = createS3SyncRemote({ store, prefix: settings.prefix })
     return await this.dependencies.createCoordinator({ vault, settings, remote, name: `S3 (${settings.bucket})` })
   }

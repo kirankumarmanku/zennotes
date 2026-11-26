@@ -55,6 +55,29 @@ async function device(store: S3ObjectStore, extra: Partial<ConstructorParameters
 }
 
 describe('S3SyncService', () => {
+  it('brings in notes the older Zotly app left in the bucket', async () => {
+    const store = createMemoryS3ObjectStore()
+    const entry = {
+      timestamp: 1_763_000_000,
+      operation: 'create',
+      sectionID: '0B1C2D3E-4F50-4A6B-8C7D-8E9FA0B1C2D3',
+      title: 'Groceries',
+      content: 'milk',
+      hlc: { millis: 1_763_000_000_000, counter: 0 }
+    }
+    await store.put('zotly/wal/MAC-OLD.jsonl', new TextEncoder().encode(JSON.stringify(entry) + '\n'))
+    const a = await device(store)
+    await mkdir(path.join(a.root, 'inbox'), { recursive: true })
+
+    expect(await a.service.save(a.root, input)).toMatchObject({ imported: 1, importedLocked: 0, conflicts: 0 })
+    expect(await readFile(path.join(a.root, 'inbox', 'Groceries.md'), 'utf8')).toBe('milk')
+    expect(store.objects.has('zotly/vaults/notes/imports/zotly-app.json')).toBe(true)
+
+    const b = await device(store)
+    expect(await b.service.save(b.root, input)).toMatchObject({ imported: 0, pulled: 1 })
+    expect(await readFile(path.join(b.root, 'inbox', 'Groceries.md'), 'utf8')).toBe('milk')
+  })
+
   it('syncs a note from one computer to another through the bucket', async () => {
     const store = createMemoryS3ObjectStore()
     const a = await device(store)
@@ -71,6 +94,7 @@ describe('S3SyncService', () => {
     await a.service.sync(a.root)
     expect(await readFile(path.join(a.root, 'Inbox', 'Plan.md'), 'utf8')).toBe('# Plan\n\nFrom B\n')
     expect([...store.objects.keys()].every((key) => key.startsWith('zotly/vaults/notes/'))).toBe(true)
+    expect([...store.objects.keys()].some((key) => key.includes('/imports/'))).toBe(false)
   })
 
   it('keeps the secret in system storage, never in its settings file', async () => {

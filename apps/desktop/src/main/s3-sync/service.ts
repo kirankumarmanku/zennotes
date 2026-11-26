@@ -14,6 +14,7 @@ import {
   type S3SyncConnection,
   type S3SyncSecrets,
   type S3SyncSettingsFile,
+  type S3SyncVaultFiles,
   type S3SyncVaultRef
 } from '@zennotes/shared-domain/s3-sync-host-service'
 import { createDesktopCloudSyncCoordinator, DesktopCloudSyncStateStore } from '../cloud-sync-filesystem'
@@ -71,6 +72,7 @@ export class S3SyncService {
         : {}),
       ...(dependencies.now ? { now: dependencies.now } : {}),
       words: { device: 'computer' },
+      vaultFiles: (vault: S3SyncVaultRef) => desktopVaultFiles(vault.root),
       persistence: {
         async loadSettings() {
           try {
@@ -124,6 +126,42 @@ export class S3SyncService {
 
   resolveConflict(root: string, conflictId: unknown, choice: unknown): Promise<void> {
     return this.host.resolveConflict(ref(root), conflictId, choice)
+  }
+}
+
+/** The open folder's files, for bringing in the older Zotly app's notes. */
+export function desktopVaultFiles(root: string): S3SyncVaultFiles {
+  const resolve = (relative: string): string => {
+    const target = path.resolve(root, ...relative.split('/'))
+    if (target !== root && !target.startsWith(root + path.sep)) {
+      throw new Error(`${relative} is outside the vault.`)
+    }
+    return target
+  }
+  return {
+    async exists(relative) {
+      try {
+        await fs.stat(resolve(relative))
+        return true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+        throw error
+      }
+    },
+    async readText(relative) {
+      try {
+        return await fs.readFile(resolve(relative), 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+        throw error
+      }
+    },
+    async writeText(relative, content) {
+      const target = resolve(relative)
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      // `wx`: never replace a file that appeared since the check.
+      await fs.writeFile(target, content, { encoding: 'utf8', flag: 'wx' })
+    }
   }
 }
 

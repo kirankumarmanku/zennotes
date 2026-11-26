@@ -55,10 +55,26 @@ export interface S3SyncStatus {
   /** What the person calls this machine ("computer", "iPhone"), for the
    *  settings' words and the "(this …)" name Keep both gives. */
   device?: string
+  /** Once notes the older Zotly app left in the bucket were brought in. */
+  legacyImport?: S3SyncLegacyImportStatus | null
+}
+
+export interface S3SyncLegacyImportStatus {
+  at: number
+  /** Notes this device wrote into the vault. */
+  notes: number
+  /** Notes the old app had locked, left in the bucket. */
+  locked: number
+  /** Another device had already brought them in. */
+  elsewhere: boolean
 }
 
 export interface S3SyncRunResult {
   pulled: number
   pushed: number
   conflicts: number
+  /** Notes from the older Zotly app this run wrote into the vault. */
+  imported?: number
+  /** Notes the older Zotly app had locked, left in the bucket. */
+  importedLocked?: number
 }

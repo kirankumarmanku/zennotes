@@ -10,6 +10,7 @@ import {
   S3SyncHostService,
   type S3SyncConnection,
   type S3SyncSettingsFile,
+  type S3SyncVaultFiles,
   type S3SyncVaultRef
 } from '@zennotes/shared-domain/s3-sync-host-service'
 import { portableHost } from './host'
@@ -119,6 +120,11 @@ function hostService(): S3SyncHostService {
     },
     async afterChange(vault) {
       await refreshers.get(vault.key)?.()
+    },
+    vaultFiles(vault) {
+      const local = vaults.get(vault.key)
+      if (!local) throw new Error('Open the vault again to sync it with S3.')
+      return mobileVaultFiles(local)
     },
     createCoordinator({ vault, settings, remote, name }) {
       const local = vaults.get(vault.key)
@@ -264,6 +270,22 @@ function syncFileSystem(vault: PortableVault): PortableCloudSyncFileSystem {
     if (!parent || folders.has(parent)) return
     await files.mkdir(parent)
     folders.add(parent)
+  }
+}
+
+/** The vault's files, for bringing in the older Zotly app's notes. */
+export function mobileVaultFiles(vault: PortableVault): S3SyncVaultFiles {
+  const files = vault.fs
+  return {
+    // Only a verified absence reads as missing, so an unreadable note is
+    // never written over.
+    exists: async (path) => (await files.statVerified(path)) !== null,
+    readText: async (path) => ((await files.statVerified(path)) === null ? null : files.readText(path)),
+    writeText: async (path, content) => {
+      const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+      if (parent) await files.mkdir(parent)
+      await files.writeText(path, content)
+    }
   }
 }
 
