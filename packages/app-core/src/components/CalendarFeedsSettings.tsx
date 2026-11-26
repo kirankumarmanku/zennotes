@@ -83,7 +83,7 @@ export function CalendarFeedsSettings(): JSX.Element {
         Add a calendar by its .ics address to see your meetings in the calendar panel. Click a meeting to start a
         note with its time, place and guests filled in, saved under Inbox/Meetings. In Google Calendar, use the
         calendar’s “Secret address in iCal format”; in Outlook, publish the calendar and copy the ICS link. The
-        address stays in this computer’s secure storage. ZenNotes only reads it and never changes your calendar.
+        address stays in the system’s secure storage. ZenNotes only reads it and never changes your calendar.
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">

@@ -111,6 +111,21 @@ import {
   prepareNewMobileCloudRecoveryKey,
   unlockMobileCloudEncryption
 } from './mobile-cloud-encryption'
+import {
+  disconnectMobileS3Sync,
+  getMobileS3SyncStatus,
+  isMobileS3SyncConfigured,
+  resolveMobileS3SyncConflict,
+  saveMobileS3Sync,
+  syncMobileS3Vault,
+  unavailableMobileS3SyncStatus
+} from './mobile-s3-sync'
+import {
+  addMobileCalendarFeed,
+  listMobileCalendarFeeds,
+  mobileCalendarMeetings,
+  removeMobileCalendarFeed
+} from './mobile-calendar-feeds'
 import { RemoteVault } from './remote-vault'
 import {
   activeRemote,
@@ -217,6 +232,30 @@ export const cloudBackgroundSyncHost = {
     await syncMobileCloudVault(activePortableVault())
   },
   onVaultChange
+}
+
+/** The open vault when S3 sync can use it, or why not. */
+function s3SyncVault(): { vault: PortableVault } | { reason: string } {
+  let current: PortableVault | RemoteVault
+  try {
+    current = activeVault()
+  } catch {
+    return { reason: 'Open a vault to sync it with S3.' }
+  }
+  if (!(current instanceof PortableVault)) return { reason: 'S3 sync is for vaults on this device.' }
+  return { vault: current }
+}
+
+function requireS3SyncVault(): PortableVault {
+  const found = s3SyncVault()
+  if ('reason' in found) throw new Error(found.reason)
+  return found.vault
+}
+
+async function refuseCloudForS3Vault(local: PortableVault): Promise<void> {
+  if (await isMobileS3SyncConfigured(local)) {
+    throw new Error('This vault syncs with S3. Disconnect S3 sync before linking it to ZenNotes Cloud.')
+  }
 }
 
 function currentVaultInfo(): VaultInfo | null {
@@ -583,9 +622,16 @@ const portableBridge: ZenBridge = {
       ? getMobileCloudVaultLink(current)
       : Promise.resolve(null)
   },
-  linkCloudVault: (vaultId) => linkMobileCloudVault(activePortableVault(), vaultId),
-  createAndLinkCloudVault: (name, options) =>
-    createAndLinkMobileCloudVault(activePortableVault(), name, { encrypted: options?.encrypted === true }),
+  linkCloudVault: async (vaultId) => {
+    const local = activePortableVault()
+    await refuseCloudForS3Vault(local)
+    return linkMobileCloudVault(local, vaultId)
+  },
+  createAndLinkCloudVault: async (name, options) => {
+    const local = activePortableVault()
+    await refuseCloudForS3Vault(local)
+    return createAndLinkMobileCloudVault(local, name, { encrypted: options?.encrypted === true })
+  },
   // encryptCloudVault stays undefined: moving a readable vault into an
   // encrypted one is a desktop action in v1, and Settings hides it here.
   getCloudEncryptionStatus: getMobileCloudEncryptionStatus,
@@ -630,6 +676,25 @@ const portableBridge: ZenBridge = {
   restoreCloudBackup: (backupId) => restoreMobileCloudBackup(activePortableVault(), backupId),
   restoreCloudBackupNote: (backupId, snapshotItemId) =>
     restoreMobileCloudBackupNote(activePortableVault(), backupId, snapshotItemId),
+
+  // S3 sync with the person's own bucket, in the desktop app's format, so a
+  // phone and a computer share one vault. On-device vaults only: a remote
+  // workspace already lives on its server.
+  s3SyncStatus: async () => {
+    const local = s3SyncVault()
+    return 'reason' in local ? unavailableMobileS3SyncStatus(local.reason) : getMobileS3SyncStatus(local.vault)
+  },
+  s3SyncSave: (input) => saveMobileS3Sync(requireS3SyncVault(), input),
+  s3SyncNow: () => syncMobileS3Vault(requireS3SyncVault()),
+  s3SyncDisconnect: () => disconnectMobileS3Sync(requireS3SyncVault()),
+  s3SyncResolveConflict: (conflictId, choice) =>
+    resolveMobileS3SyncConflict(requireS3SyncVault(), conflictId, choice),
+
+  // The person's calendars, read-only, for notes on meetings.
+  calendarFeeds: () => listMobileCalendarFeeds(),
+  addCalendarFeed: (name, address) => addMobileCalendarFeed(name, address),
+  removeCalendarFeed: (id) => removeMobileCalendarFeed(id),
+  calendarMeetings: (fromIso, toIso) => mobileCalendarMeetings(fromIso, toIso),
 
   getServerCapabilities: async (): Promise<ServerCapabilities | null> =>
     activeRemote()?.capabilities ?? null,

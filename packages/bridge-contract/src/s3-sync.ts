@@ -52,6 +52,9 @@ export interface S3SyncStatus {
   lastError: string | null
   syncing: boolean
   conflicts: S3SyncConflictSummary[]
+  /** What the person calls this machine ("computer", "iPhone"), for the
+   *  settings' words and the "(this …)" name Keep both gives. */
+  device?: string
 }
 
 export interface S3SyncRunResult {

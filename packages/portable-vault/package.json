@@ -33,7 +33,10 @@
     "./remote-client": "./src/remote-client.ts",
     "./remote-vault": "./src/remote-vault.ts",
     "./remote-workspace": "./src/remote-workspace.ts",
-    "./memory-fs": "./src/memory-fs.ts"
+    "./memory-fs": "./src/memory-fs.ts",
+    "./s3-sync": "./src/mobile-s3-sync.ts",
+    "./calendar-feeds": "./src/mobile-calendar-feeds.ts",
+    "./host-fetch": "./src/host-fetch.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && node ../../tooling/scripts/check-portable-vault-boundary.mjs",

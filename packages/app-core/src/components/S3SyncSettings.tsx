@@ -131,15 +131,16 @@ export function S3SyncSettings({ localVaultName }: { localVaultName: string }): 
     setDraft((current) => ({ ...current, [key]: value }))
   const canSave = !!draft.bucket.trim() && !!draft.accessKeyId.trim() && !!draft.vaultName.trim() &&
     (status?.hasSecretKey || !!secret.trim())
+  const device = status?.device ?? 'computer'
   const lastSynced = status?.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleString() : null
 
   return (
     <div data-settings-search-id="s3-sync" aria-busy={busy !== null} className="space-y-4 px-5 py-4">
       <div className="text-xs leading-5 text-ink-500">
         Sync this vault with a bucket you own on Amazon S3, Cloudflare R2, MinIO or another S3-compatible store.
-        Each computer reads and writes the bucket directly. Use keys that can only read and write this bucket’s
+        Each {device === 'computer' ? 'computer' : 'device'} reads and writes the bucket directly. Use keys that can only read and write this bucket’s
         folder: the S3 sync guide in the docs has a policy you can copy. The secret key stays in{' '}
-        {status?.canStoreSecurely === false ? 'nowhere safe on this computer yet' : 'this computer’s secure storage'}.
+        {status?.canStoreSecurely === false ? `nowhere safe on this ${device} yet` : `this ${device}’s secure storage`}.
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -216,15 +217,15 @@ export function S3SyncSettings({ localVaultName }: { localVaultName: string }): 
 
       {status && status.conflicts.length > 0 && (
         <div className="space-y-2">
-          <div className="text-sm font-medium text-ink-900">Notes changed on two computers</div>
+          <div className="text-sm font-medium text-ink-900">Notes changed in two places</div>
           <div className="text-xs leading-5 text-ink-500">
-            Your version here is untouched until you pick. Keep both saves this computer’s version beside the
-            other as “(this computer)”.
+            Your version here is untouched until you pick. Keep both saves this {device}’s version beside the
+            other as “(this {device})”.
           </div>
           {status.conflicts.map((conflict) => (
             <div key={conflict.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-paper-300/70 px-3 py-2">
               <span className="min-w-0 flex-1 truncate text-sm text-ink-800" title={conflict.path}>{conflict.path}</span>
-              <Button size="sm" onClick={() => resolve(conflict.id, 'local')}>Keep this computer’s</Button>
+              <Button size="sm" onClick={() => resolve(conflict.id, 'local')}>Keep this {device}’s</Button>
               <Button size="sm" onClick={() => resolve(conflict.id, 'remote')}>Use the bucket’s</Button>
               <Button size="sm" variant="ghost" onClick={() => resolve(conflict.id, 'both')}>Keep both</Button>
             </div>

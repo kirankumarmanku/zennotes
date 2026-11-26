@@ -314,6 +314,9 @@ export interface HostShell {
   updatesMessage: string
   /** Ends "zen.x is not available …", e.g. "on iPhone". */
   unavailableWhere: string
+  /** How the device names itself inside a sentence, after "this": "iPhone"
+   *  in "the secret key is missing from this iPhone". Defaults to "device". */
+  deviceWord?: string
   /** The last sentence of "Could not connect to the ZenNotes server at …":
    *  what on this platform most often stops a connection a browser on the
    *  same device makes (remote-client.ts has the iPhone's and Android's). */
@@ -384,6 +387,10 @@ export interface HostVaults {
   describeRoot(vault: { name: string; fs: VaultFileSystem }): string
   /** Opens an attachment in another app (share sheet, Quick Look, an intent). */
   openAssetExternally(relPath: string): Promise<{ ok: boolean; error?: string }>
+  /** Why a vault already syncs some other way the host owns (the iPhone's
+   *  iCloud Drive tier), in a sentence, or null. S3 sync refuses such a
+   *  vault: two syncs on one folder fight over every file. */
+  syncsElsewhere?(vault: { name: string; fs: VaultFileSystem }): Promise<string | null>
 }
 
 export interface PortableHost {

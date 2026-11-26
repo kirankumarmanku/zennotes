@@ -4465,7 +4465,7 @@ export function SettingsModal(): JSX.Element {
                 id: "s3-sync",
                 title: "S3 bucket sync",
                 description:
-                  "Connect a bucket, sync now, and pick a version when a note changed on two computers.",
+                  "Connect a bucket, sync now, and pick a version when a note changed in two places.",
                 keywords: ["s3", "aws", "bucket", "access key", "conflict"],
               },
             ],
