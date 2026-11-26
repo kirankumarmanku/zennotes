@@ -81,7 +81,7 @@ export interface CalendarVaultChoice {
 export interface CalendarFeedsFile {
   version: 2
   feeds: CalendarFeedRecord[]
-  /** By vault key. A vault without an entry shows every calendar. */
+  /** By vault key. A vault without an entry shows no calendar until one is ticked. */
   vaults: Record<string, CalendarVaultChoice>
 }
 
@@ -161,9 +161,10 @@ export class CalendarFeedsService {
     const record: CalendarFeedRecord = { id, name, host: url.hostname, addedAt: this.now() }
     await this.update((file) => {
       const vaults = { ...file.vaults }
-      const choice = vault ? vaults[vault.key] : undefined
-      if (vault && choice) {
-        vaults[vault.key] = { sources: [...choice.sources, FEED_SOURCE_PREFIX + id], updatedAt: this.now() }
+      // A calendar added from a vault is ticked there, and only there.
+      if (vault) {
+        const before = vaults[vault.key]?.sources ?? []
+        vaults[vault.key] = { sources: [...before, FEED_SOURCE_PREFIX + id], updatedAt: this.now() }
       }
       return { ...file, feeds: [...file.feeds, record], vaults }
     })
@@ -219,7 +220,7 @@ export class CalendarFeedsService {
         color: null,
         selected: false
       }))
-    ].map((source) => ({ ...source, selected: chosen ? chosen.has(source.id) : true }))
+    ].map((source) => ({ ...source, selected: chosen ? chosen.has(source.id) : false }))
     return {
       vaultName: vault?.name ?? null,
       customized: Boolean(choice),
@@ -262,8 +263,8 @@ export class CalendarFeedsService {
     await this.dependencies.deviceCalendars?.openSettings?.()
   }
 
-  /** Meetings overlapping the window from the calendars the vault shows (all
-   *  of them while it has no choice). One calendar failing never hides the others. */
+  /** Meetings overlapping the window from the calendars ticked for the vault
+   *  (none while it has no choice). One calendar failing never hides the others. */
   async meetings(fromIso: unknown, toIso: unknown, vault: CalendarVaultRef | null = null): Promise<CalendarMeetingsResult> {
     const from = new Date(typeof fromIso === 'string' ? fromIso : NaN)
     const to = new Date(typeof toIso === 'string' ? toIso : NaN)
@@ -278,7 +279,7 @@ export class CalendarFeedsService {
     const file = await this.read()
     const choice = vault ? file.vaults[vault.key] : undefined
     const chosen = choice ? new Set(choice.sources) : null
-    const shows = (id: string): boolean => (chosen ? chosen.has(id) : true)
+    const shows = (id: string): boolean => (chosen ? chosen.has(id) : false)
     const feeds = file.feeds.filter((feed) => shows(FEED_SOURCE_PREFIX + feed.id))
     await Promise.all([
       ...feeds.map(async (feed) => {

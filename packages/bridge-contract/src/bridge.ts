@@ -253,7 +253,7 @@ export interface ZenBridge {
   addCalendarFeed?(name: string, address: string): Promise<CalendarFeedSummary>
   removeCalendarFeed?(id: string): Promise<void>
   /** Meetings that overlap [fromIso, toIso), from the calendars the open
-   *  vault shows (every calendar while it has no choice of its own). */
+   *  vault shows (none while it has no choice of its own). */
   calendarMeetings?(fromIso: string, toIso: string): Promise<CalendarMeetingsResult>
   /** Every calendar the open vault can show, feeds and the device's own,
    *  each marked with whether this vault shows it. */

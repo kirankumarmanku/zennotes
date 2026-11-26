@@ -38,10 +38,10 @@ Each vault has its own ticks in **Calendars**, so a work vault can show your
 work calendar and a personal vault your family one. The choice is kept on each
 device, because a calendar on your iPhone isn't the same object on your Mac.
 
-- A vault you haven't changed shows every calendar. Press **None** and tick
-  the ones you want, or untick the ones you don't.
+- A vault starts with no calendars ticked, so it shows no meetings until you
+  tick the ones you want. **All** ticks every calendar at once.
 - A calendar you add by address from a vault's settings is ticked in that
-  vault. Vaults that already have their own choice don't get it.
+  vault only.
 - Removing a calendar removes it from every vault. Notes you wrote stay.
 
 ## Write notes on a meeting

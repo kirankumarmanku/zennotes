@@ -79,7 +79,7 @@ export interface CalendarSource {
 export interface CalendarSourcesResult {
   /** The open vault the choice belongs to, or null when none is open. */
   vaultName: string | null
-  /** False while the vault has no choice of its own: it then shows every calendar. */
+  /** False while the vault has no choice of its own: it then shows no calendar. */
   customized: boolean
   device: {
     access: DeviceCalendarAccess

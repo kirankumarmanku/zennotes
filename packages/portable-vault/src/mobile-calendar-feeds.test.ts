@@ -36,7 +36,8 @@ describe('mobile calendar feeds', () => {
     const host = installTestHost({ http, shell: { deviceWord: 'iPhone' } })
     resetMobileCalendarFeeds()
 
-    const feed = await addMobileCalendarFeed('Work', SECRET_ADDRESS)
+    const vault = { key: 'work-vault', name: 'Work' }
+    const feed = await addMobileCalendarFeed('Work', SECRET_ADDRESS, vault)
     assert.equal(feed.host, 'calendar.example.com')
     assert.deepEqual(await listMobileCalendarFeeds(), [feed])
 
@@ -48,7 +49,7 @@ describe('mobile calendar feeds', () => {
       'https://calendar.example.com/private-abc123/basic.ics'
     )
 
-    const result = await mobileCalendarMeetings('2026-11-26T00:00:00.000Z', '2026-11-27T00:00:00.000Z')
+    const result = await mobileCalendarMeetings('2026-11-26T00:00:00.000Z', '2026-11-27T00:00:00.000Z', vault)
     assert.deepEqual(result.failures, [])
     assert.equal(result.meetings.length, 1)
     assert.equal(result.meetings[0]!.title, 'Team standup')
@@ -69,11 +70,12 @@ describe('mobile calendar feeds', () => {
     const http = new RecordingHttp(() => ({ status: 200, headers: {}, data: ICS }))
     installTestHost({ http, shell: { deviceWord: 'iPhone' } })
     resetMobileCalendarFeeds()
-    await addMobileCalendarFeed('Old', 'https://calendar.example.com/gone.ics')
+    const vault = { key: 'old-vault', name: 'Old' }
+    await addMobileCalendarFeed('Old', 'https://calendar.example.com/gone.ics', vault)
     // Later the server stops answering for it; the cached copy is gone too.
     http.responder = () => ({ status: 404, headers: {}, data: 'nope' })
     resetMobileCalendarFeeds()
-    const result = await mobileCalendarMeetings('2026-11-26T00:00:00.000Z', '2026-11-27T00:00:00.000Z')
+    const result = await mobileCalendarMeetings('2026-11-26T00:00:00.000Z', '2026-11-27T00:00:00.000Z', vault)
     assert.equal(result.failures.length, 1)
     assert.match(result.failures[0]!.message, /Old/)
   })

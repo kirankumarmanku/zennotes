@@ -75,7 +75,7 @@ describe('CalendarFeedsService', () => {
     expect(() => normalizeFeedAddress('https://user:pw@example.com/a.ics')).toThrow()
   })
 
-  it('reads meetings from every feed, caches for a few minutes and keeps the last copy offline', async () => {
+  it('reads meetings from the ticked feeds, caches for a few minutes and keeps the last copy offline', async () => {
     let online = true
     const { feeds, calls, advance } = await service({
       [SECRET]: () => {
@@ -83,16 +83,19 @@ describe('CalendarFeedsService', () => {
         return new Response(ICS)
       }
     })
-    await feeds.add('Work', SECRET)
-    const first = await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z')
+    const vault = { key: 'work-vault', name: 'Work' }
+    await feeds.add('Work', SECRET, vault)
+    // Another vault starts with nothing ticked.
+    expect((await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z')).meetings).toEqual([])
+    const first = await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z', vault)
     expect(first.meetings.map((m) => [m.title, m.feedName])).toEqual([['Design review', 'Work']])
     expect(first.failures).toEqual([])
-    await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z')
+    await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z', vault)
     expect(calls).toHaveLength(1)
 
     advance(10 * 60_000)
     online = false
-    const offline = await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z')
+    const offline = await feeds.meetings('2026-11-25T00:00:00Z', '2026-11-26T00:00:00Z', vault)
     expect(offline.meetings).toHaveLength(1)
     expect(calls).toHaveLength(2)
     await expect(feeds.meetings('2026-11-26T00:00:00Z', '2026-11-25T00:00:00Z')).rejects.toThrow(/not valid/)

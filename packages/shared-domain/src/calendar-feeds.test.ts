@@ -101,7 +101,7 @@ function service(options: { stored?: unknown; device?: FakeDevice } = {}) {
 }
 
 describe('calendars per vault', () => {
-  it('shows every calendar in a vault that has no choice yet, and keeps a version 1 list', async () => {
+  it('shows no calendar in a vault that has no choice yet, and keeps a version 1 list', async () => {
     const { calendars, secrets } = service({
       stored: { version: 1, feeds: [{ id: 'f1', name: 'Team', host: 'calendar.example.com', addedAt: 1 }] }
     })
@@ -111,8 +111,11 @@ describe('calendars per vault', () => {
     expect(sources.vaultName).toBe('Work')
     expect(sources.device.access).toBe('unsupported')
     expect(sources.sources).toEqual([
-      { id: 'feed:f1', kind: 'feed', name: 'Team', detail: 'calendar.example.com', color: null, selected: true }
+      { id: 'feed:f1', kind: 'feed', name: 'Team', detail: 'calendar.example.com', color: null, selected: false }
     ])
+    expect((await calendars.meetings(FROM, TO, WORK)).meetings).toEqual([])
+    expect((await calendars.meetings(FROM, TO, null)).meetings).toEqual([])
+    await calendars.choose(WORK, ['feed:f1'])
     const meetings = await calendars.meetings(FROM, TO, WORK)
     expect(meetings.meetings.map((meeting) => [meeting.title, meeting.feedId, meeting.feedName])).toEqual([
       ['Team standup', 'feed:f1', 'Team']
@@ -131,10 +134,13 @@ describe('calendars per vault', () => {
     const allowed = await calendars.requestDeviceAccess(WORK)
     expect(allowed.device.access).toBe('granted')
     expect(allowed.sources.map((source) => [source.id, source.detail, source.color, source.selected])).toEqual([
-      ['device:cal-gmail-work', 'Gmail', '#1badf8', true],
-      ['device:cal-icloud-home', 'iCloud', '#ff2968', true],
-      ['device:cal-holidays', 'Other', null, true]
+      ['device:cal-gmail-work', 'Gmail', '#1badf8', false],
+      ['device:cal-icloud-home', 'iCloud', '#ff2968', false],
+      ['device:cal-holidays', 'Other', null, false]
     ])
+    // Nothing ticked yet: no read at all.
+    expect((await calendars.meetings(FROM, TO, WORK)).meetings).toEqual([])
+    expect(device.asked).toEqual([])
 
     const chosen = await calendars.choose(WORK, ['device:cal-gmail-work'])
     expect(chosen.customized).toBe(true)
@@ -148,8 +154,10 @@ describe('calendars per vault', () => {
     expect(work.meetings[0]).not.toHaveProperty('calendarId')
     expect(device.asked.at(-1)).toEqual(['cal-gmail-work'])
 
-    // Another vault keeps its own choice: still every calendar.
-    expect((await calendars.meetings(FROM, TO, HOME)).meetings).toHaveLength(3)
+    // Another vault keeps its own choice: still nothing until it ticks some.
+    expect((await calendars.meetings(FROM, TO, HOME)).meetings).toEqual([])
+    await calendars.choose(HOME, ['device:cal-icloud-home', 'device:cal-holidays'])
+    expect((await calendars.meetings(FROM, TO, HOME)).meetings).toHaveLength(2)
   })
 
   it('reads nothing for a vault whose choice is none', async () => {
@@ -162,13 +170,13 @@ describe('calendars per vault', () => {
     expect(device.asked).toEqual([])
   })
 
-  it('ticks a new feed only in the vault it was added from, when that vault has a choice', async () => {
+  it('ticks a new feed only in the vault it was added from', async () => {
     const { calendars } = service()
-    await calendars.choose(WORK, [])
     const added = await calendars.add('Team', 'https://calendar.example.com/team.ics', WORK)
     expect((await calendars.sources(WORK)).sources.map((source) => source.selected)).toEqual([true])
     await calendars.choose(HOME, [])
     const second = await calendars.add('Gym', 'https://gym.example.com/classes.ics', WORK)
+    expect((await calendars.sources(WORK)).sources.map((source) => source.selected)).toEqual([true, true])
     const home = await calendars.sources(HOME)
     expect(home.sources.map((source) => [source.id, source.selected])).toEqual([
       [`feed:${added.id}`, false],
@@ -218,7 +226,8 @@ describe('calendars per vault', () => {
     device.state = 'granted'
     device.failEvents = true
     const { calendars } = service({ device })
-    await calendars.add('Team', 'https://calendar.example.com/team.ics')
+    const feed = await calendars.add('Team', 'https://calendar.example.com/team.ics')
+    await calendars.choose(WORK, [`feed:${feed.id}`, 'device:cal-icloud-home'])
     const result = await calendars.meetings(FROM, TO, WORK)
     expect(result.meetings.map((meeting) => meeting.title)).toEqual(['Team standup'])
     expect(result.failures).toEqual([

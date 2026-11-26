@@ -206,9 +206,9 @@ export function CalendarFeedsSettings(): JSX.Element {
           <div className="flex flex-wrap items-center gap-2 text-xs text-ink-600">
             <span className="min-w-0 flex-1">
               {sources.vaultName
-                ? sources.customized
+                ? selectedCount > 0
                   ? `${sources.vaultName} shows ${selectedCount} of ${sources.sources.length} calendars.`
-                  : `${sources.vaultName} shows every calendar until you change the ticks.`
+                  : `${sources.vaultName} shows no calendars yet. Tick the ones it should show.`
                 : 'Open a vault to choose its calendars.'}
             </span>
             {canChoose && (
