@@ -220,6 +220,7 @@ import { ArchiveView } from './ArchiveView'
 import { TrashView } from './TrashView'
 import { AssetsView } from './AssetsView'
 import { QuickNotesView } from './QuickNotesView'
+import { MeetingsView } from './MeetingsView'
 import type { MathRenderer } from '@shared/app-config'
 import { isTasksTabPath } from '@shared/tasks'
 import { isWorkflowsTabPath } from '@shared/workflows-view'
@@ -233,6 +234,7 @@ import { isArchiveTabPath } from '@shared/archive'
 import { isTrashTabPath } from '@shared/trash'
 import { isAssetsViewTabPath } from '@shared/assets-view'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
+import { isMeetingsTabPath } from '@shared/meetings-view'
 import {
   hasZenAssetItem,
   hasZenItem,
@@ -3619,6 +3621,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
           pinned: pinnedSet.has(path),
           preview: path === previewTab,
           isQuick: false,
+          isMeetings: false,
           isTasks: false,
           isWorkflows: false,
           isTag: false,
@@ -3658,6 +3661,13 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             ...base,
             title: folderLabels.quick,
             isQuick: true
+          }
+        }
+        if (isMeetingsTabPath(path)) {
+          return {
+            ...base,
+            title: 'Meetings',
+            isMeetings: true
           }
         }
         if (isTagsTabPath(path)) {
@@ -3802,6 +3812,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
     // close, close relatives, or split them into another pane.
     if (
       isQuickNotesTabPath(path) ||
+      isMeetingsTabPath(path) ||
       isWorkflowsTabPath(path) ||
       isAtlasTabPath(path) ||
       isTagsTabPath(path) ||
@@ -3911,6 +3922,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       pinned: boolean
       preview: boolean
       isQuick: boolean
+      isMeetings: boolean
       isTasks: boolean
       isWorkflows: boolean
       isTag: boolean
@@ -3926,6 +3938,7 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
       const active = tab.path === activeTab
       const isVirtual =
         tab.isQuick ||
+        tab.isMeetings ||
         tab.isTasks ||
         tab.isWorkflows ||
         tab.isTag ||
@@ -4093,6 +4106,9 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
               )}
               {tab.isQuick && (
                 <ZapIcon width={13} height={13} className="shrink-0 text-accent" />
+              )}
+              {tab.isMeetings && (
+                <CalendarIcon width={13} height={13} className="shrink-0 text-accent" />
               )}
               {tab.isTag && (
                 <TagIcon width={13} height={13} className="shrink-0 text-accent" />
@@ -4897,6 +4913,8 @@ export function EditorPane({ pane }: { pane: PaneLeaf }): JSX.Element {
             <TasksView />
           ) : isQuickNotesTabPath(activeTab) ? (
             <QuickNotesView />
+          ) : isMeetingsTabPath(activeTab) ? (
+            <MeetingsView />
           ) : isTagsTabPath(activeTab) ? (
             <TagView />
           ) : isHelpTabPath(activeTab) ? (

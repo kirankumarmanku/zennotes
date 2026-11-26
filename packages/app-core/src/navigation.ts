@@ -110,13 +110,14 @@ export function openTodayDailyNote(): Promise<void> {
   return captureNavigationContext()() ? useStore.getState().openTodayDailyNote() : Promise.resolve()
 }
 
-export type AppPage = 'tasks' | 'quick-notes' | 'tags' | 'assets' | 'archive' | 'trash'
+export type AppPage = 'tasks' | 'quick-notes' | 'meetings' | 'tags' | 'assets' | 'archive' | 'trash'
 export function openAppPage(page: AppPage): Promise<void> {
   if (!captureNavigationContext()()) return Promise.resolve()
   const state = useStore.getState()
   switch (page) {
     case 'tasks': return state.openTasksView()
     case 'quick-notes': return state.openQuickNotesView()
+    case 'meetings': return state.openMeetingsView()
     case 'tags': return state.openTagView('')
     case 'assets': return state.openAssetsView()
     case 'archive': return state.openArchiveView()

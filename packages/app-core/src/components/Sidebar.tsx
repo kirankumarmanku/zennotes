@@ -15,6 +15,7 @@ import {
   isArchiveViewActive,
   isAssetsViewActive,
   isHelpViewActive,
+  isMeetingsViewActive,
   isQuickNotesViewActive,
   isTagsViewActive,
   isTasksViewActive,
@@ -507,6 +508,8 @@ export function Sidebar(): JSX.Element {
   const atlasEnabled = useStore((s) => s.atlasEnabled);
   const openQuickNotesView = useStore((s) => s.openQuickNotesView);
   const quickNotesViewActive = useStore(isQuickNotesViewActive);
+  const openMeetingsView = useStore((s) => s.openMeetingsView);
+  const meetingsViewActive = useStore(isMeetingsViewActive);
   const openHelpView = useStore((s) => s.openHelpView);
   const helpViewActive = useStore(isHelpViewActive);
   const openArchiveView = useStore((s) => s.openArchiveView);
@@ -3037,6 +3040,7 @@ export function Sidebar(): JSX.Element {
       trashViewActive,
       archiveViewActive,
       quickNotesViewActive,
+      meetingsViewActive,
     ];
     if (!sidebarSelectionChanged(revealedSelectionRef.current, selection)) {
       return;
@@ -3090,6 +3094,12 @@ export function Sidebar(): JSX.Element {
       if (quickNotesViewActive) {
         return document.querySelector(
           '[data-sidebar-type="folder"][data-sidebar-folder="quick"][data-sidebar-subpath=""]',
+        ) as HTMLElement | null;
+      }
+
+      if (meetingsViewActive) {
+        return document.querySelector(
+          '[data-sidebar-type="meetings"]',
         ) as HTMLElement | null;
       }
 
@@ -3171,6 +3181,7 @@ export function Sidebar(): JSX.Element {
     archiveViewActive,
     isSidebarFocused,
     quickNotesViewActive,
+    meetingsViewActive,
     selectedPath,
     notes,
     vaultSettings,
@@ -3626,6 +3637,18 @@ export function Sidebar(): JSX.Element {
                 <PlusIcon width={16} height={16} strokeWidth={2.5} />
               </button>
             }
+          />
+
+          {/* Every meeting note, the latest meeting first (MeetingsView). */}
+          <TaskSidebarRow
+            active={meetingsViewActive}
+            onClick={() => void openMeetingsView()}
+            label="Meetings"
+            icon={<CalendarIcon width={12} height={12} strokeWidth={2.15} />}
+            sidebarType="meetings"
+            sidebarIdx={idxCounter.current.value++}
+            vimHighlight={vimCursor === idxCounter.current.value - 1}
+            sidebarFocused={cursorDrawn}
           />
 
           <DateNotesNav

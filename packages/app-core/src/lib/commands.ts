@@ -1693,6 +1693,13 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       run: () => getState().openQuickNotesView()
     },
     {
+      id: 'nav.meetings',
+      title: 'Go to Meetings',
+      category: 'Go',
+      keywords: 'meetings meeting notes calendar',
+      run: () => getState().openMeetingsView()
+    },
+    {
       id: 'nav.folder.inbox',
       title: `Go to ${labels().inbox}`,
       category: 'Go',

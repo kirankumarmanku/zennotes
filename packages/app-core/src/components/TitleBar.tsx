@@ -8,6 +8,7 @@ import { isHelpTabPath } from '@shared/help'
 import { isArchiveTabPath } from '@shared/archive'
 import { isTrashTabPath } from '@shared/trash'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
+import { isMeetingsTabPath } from '@shared/meetings-view'
 import { resolveSystemFolderLabels } from '../lib/system-folder-labels'
 
 export function TitleBar({ standalone = false }: { standalone?: boolean }): JSX.Element | null {
@@ -32,6 +33,8 @@ export function TitleBar({ standalone = false }: { standalone?: boolean }): JSX.
     ? activeNote.title
     : isQuickNotesTabPath(selectedPath)
       ? labels.quick
+    : isMeetingsTabPath(selectedPath)
+      ? 'Meetings'
     : isTasksTabPath(selectedPath)
       ? labels.tasks
     : isWorkflowsTabPath(selectedPath)

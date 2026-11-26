@@ -147,6 +147,7 @@ export const COMMAND_CATALOG: CommandCatalogEntry[] = [
   { id: "nav.search", title: "Search Notes…", category: "Go", keywords: "find open cmd+f ctrl+f leader" },
   { id: "nav.search-text", title: "Search Text in Vault…", category: "Go", keywords: "grep live grep telescope fuzzy content body line text vault" },
   { id: "nav.folder.quick", title: "Go to Quick Notes", category: "Go", keywords: "quick scratch" },
+  { id: "nav.meetings", title: "Go to Meetings", category: "Go", keywords: "meetings meeting notes calendar" },
   { id: "nav.folder.inbox", title: "Go to Inbox", category: "Go" },
   { id: "nav.folder.archive", title: "Go to Archive", category: "Go", keywords: "archive archived storage" },
   { id: "nav.folder.trash", title: "Go to Trash", category: "Go", keywords: "trash deleted restore bin" },

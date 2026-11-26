@@ -2884,6 +2884,8 @@ export function VimNav(): JSX.Element | null {
       void state.openHelpView()
     } else if (itemType === 'settings') {
       state.setSettingsOpen(true)
+    } else if (itemType === 'meetings') {
+      void state.openMeetingsView()
     } else if (itemType === 'archive') {
       void state.openArchiveView()
     } else if (itemType === 'trash') {

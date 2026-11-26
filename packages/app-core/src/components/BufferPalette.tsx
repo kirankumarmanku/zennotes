@@ -27,6 +27,7 @@ import { isAtlasTabPath } from '@shared/atlas-view'
 import { isArchiveTabPath } from '@shared/archive'
 import { isTrashTabPath } from '@shared/trash'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
+import { isMeetingsTabPath } from '@shared/meetings-view'
 import { resolveSystemFolderLabels, type SystemFolderLabels } from '../lib/system-folder-labels'
 import { focusEditorAfterReadOpen, focusEditorAfterPaletteClose } from '../lib/editor-focus'
 import { noteFolderLabel } from '../lib/vault-layout'
@@ -139,6 +140,19 @@ function buildEntries(deps: BuildDeps): BufferEntry[] {
         title: labels.quick,
         subtitle: 'Quick capture notes list',
         keywords: 'quick notes capture scratch inbox virtual',
+        badge,
+        current: isCurrent,
+        dirty: false,
+        virtual: true
+      })
+      return
+    }
+    if (isMeetingsTabPath(path)) {
+      entries.push({
+        path,
+        title: 'Meetings',
+        subtitle: 'Meeting notes, latest first',
+        keywords: 'meetings calendar meeting notes virtual',
         badge,
         current: isCurrent,
         dirty: false,

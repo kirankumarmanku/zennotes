@@ -20,6 +20,7 @@ import { isWorkflowsTabPath } from '@shared/workflows-view'
 import { isAtlasTabPath } from '@shared/atlas-view'
 import { isTrashTabPath } from '@shared/trash'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
+import { isMeetingsTabPath } from '@shared/meetings-view'
 import { focusEditorAfterReadOpen, focusEditorAfterPaletteClose } from '../lib/editor-focus'
 import { Modal } from './ui/Modal'
 
@@ -27,6 +28,7 @@ function isVirtualPath(path: string | null): boolean {
   if (!path) return true
   return (
     isQuickNotesTabPath(path) ||
+    isMeetingsTabPath(path) ||
     isTasksTabPath(path) ||
     isWorkflowsTabPath(path) ||
     isAtlasTabPath(path) ||

@@ -112,6 +112,7 @@ import { TRASH_TAB_PATH, isTrashTabPath } from '@shared/trash'
 import { ASSETS_VIEW_TAB_PATH } from '@shared/assets-view'
 import { UNRESOLVED_LINKS_TAB_PATH } from '@shared/unresolved-links'
 import { QUICK_NOTES_TAB_PATH, isQuickNotesTabPath } from '@shared/quick-notes'
+import { MEETINGS_TAB_PATH, isMeetingsTabPath } from '@shared/meetings-view'
 import { isAssetTabPath, assetPathFromTab, assetTabPath } from './lib/asset-tabs'
 import {
   invalidateAllExcalidrawPreviews,
@@ -3542,6 +3543,15 @@ export function isQuickNotesViewActive(state: {
   return leaf?.activeTab === QUICK_NOTES_TAB_PATH
 }
 
+/** True when the active pane's active tab is the built-in Meetings view. */
+export function isMeetingsViewActive(state: {
+  paneLayout: PaneLayout
+  activePaneId: string
+}): boolean {
+  const leaf = findLeaf(state.paneLayout, state.activePaneId)
+  return leaf?.activeTab === MEETINGS_TAB_PATH
+}
+
 interface Store {
   vault: VaultInfo | null
   workspaceMode: WorkspaceMode
@@ -4069,6 +4079,8 @@ interface Store {
   openHelpView: () => Promise<void>
   /** Open the built-in Quick Notes tab in the active pane. */
   openQuickNotesView: () => Promise<void>
+  /** Open the built-in Meetings tab (meeting notes, latest first) in the active pane. */
+  openMeetingsView: () => Promise<void>
   /** Open the built-in Archive tab in the active pane. */
   openArchiveView: () => Promise<void>
   openAssetsView: () => Promise<void>
@@ -7231,6 +7243,13 @@ export const useStore = create<Store>((set, get) => {
   openQuickNotesView: async () => {
     const state = get()
     await get().openNoteInPane(state.activePaneId, QUICK_NOTES_TAB_PATH)
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    set({ focusedPanel: 'editor' })
+  },
+
+  openMeetingsView: async () => {
+    const state = get()
+    await get().openNoteInPane(state.activePaneId, MEETINGS_TAB_PATH)
     ;(document.activeElement as HTMLElement | null)?.blur?.()
     set({ focusedPanel: 'editor' })
   },
@@ -11908,7 +11927,7 @@ export const useStore = create<Store>((set, get) => {
       return
     }
 
-    if (isQuickNotesTabPath(path)) {
+    if (isQuickNotesTabPath(path) || isMeetingsTabPath(path)) {
       set((cur) => {
         const nextLayout =
           updateLeaf(cur.paneLayout, paneId, (l) => leafWithAddedTab(l, path)) ??

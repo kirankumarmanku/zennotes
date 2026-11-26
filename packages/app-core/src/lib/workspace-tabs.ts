@@ -1,6 +1,7 @@
 import { isArchiveTabPath } from '@shared/archive'
 import { isHelpTabPath } from '@shared/help'
 import { isQuickNotesTabPath } from '@shared/quick-notes'
+import { isMeetingsTabPath } from '@shared/meetings-view'
 import { isTagsTabPath } from '@shared/tags'
 import { isTasksTabPath } from '@shared/tasks'
 import { isTrashTabPath } from '@shared/trash'
@@ -17,6 +18,7 @@ import { allLeaves, type PaneLayout } from './pane-layout'
 export function isWorkspaceVirtualTabPath(path: string): boolean {
   return (
     isQuickNotesTabPath(path) ||
+    isMeetingsTabPath(path) ||
     isTasksTabPath(path) ||
     isWorkflowsTabPath(path) ||
     isAtlasTabPath(path) ||
