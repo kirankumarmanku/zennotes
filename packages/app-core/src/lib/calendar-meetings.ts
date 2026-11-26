@@ -4,8 +4,10 @@ import type { CalendarMeeting, CalendarMeetingsResult } from '@zennotes/bridge-c
 import type { CalendarEvent } from '@shared/calendar-ics'
 import { DEFAULT_MEETING_NOTES_FOLDER, meetingDay, meetingNoteTitle } from '@shared/meeting-notes'
 import { noteFolderSubpath, type normalizeVaultSettings } from './vault-layout'
+import { useStore } from '../store'
 
-/** Sent on window when a calendar is added or removed, so open panels re-read. */
+/** Sent on window when a calendar is added, removed or ticked for the vault,
+ *  so open panels re-read. */
 export const CALENDAR_FEEDS_CHANGED_EVENT = 'zen:calendar-feeds-changed'
 
 const REFRESH_MS = 5 * 60_000
@@ -60,13 +62,15 @@ export interface CalendarMeetingsState {
 const EMPTY: CalendarMeetingsState = { meetings: [], failures: [], loading: false }
 
 /**
- * Meetings between two local days (inclusive), read through the host. Empty
- * where the host has no calendars. Re-reads every few minutes and when a
- * calendar is added or removed.
+ * Meetings between two local days (inclusive), read through the host from
+ * the calendars the open vault shows. Empty where the host has no calendars.
+ * Re-reads every few minutes, when the vault's calendars change and when
+ * another vault is opened.
  */
 export function useCalendarMeetings(fromDay: Date, toDay: Date): CalendarMeetingsState {
   const [state, setState] = useState<CalendarMeetingsState>(EMPTY)
   const [nonce, setNonce] = useState(0)
+  const vaultRoot = useStore((s) => s.vault?.root ?? null)
   const fromIso = new Date(fromDay.getFullYear(), fromDay.getMonth(), fromDay.getDate()).toISOString()
   const toIso = new Date(toDay.getFullYear(), toDay.getMonth(), toDay.getDate() + 1).toISOString()
 
@@ -98,7 +102,7 @@ export function useCalendarMeetings(fromDay: Date, toDay: Date): CalendarMeeting
     return () => {
       live = false
     }
-  }, [fromIso, toIso, nonce])
+  }, [fromIso, toIso, nonce, vaultRoot])
 
   return state
 }

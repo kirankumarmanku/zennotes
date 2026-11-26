@@ -122,9 +122,15 @@ import {
 } from './mobile-s3-sync'
 import {
   addMobileCalendarFeed,
+  calendarVaultKey,
+  chooseMobileCalendars,
   listMobileCalendarFeeds,
   mobileCalendarMeetings,
-  removeMobileCalendarFeed
+  mobileCalendarSources,
+  openMobileDeviceCalendarSettings,
+  removeMobileCalendarFeed,
+  requestMobileDeviceCalendarAccess,
+  type CalendarVaultRef
 } from './mobile-calendar-feeds'
 import { RemoteVault } from './remote-vault'
 import {
@@ -232,6 +238,18 @@ export const cloudBackgroundSyncHost = {
     await syncMobileCloudVault(activePortableVault())
   },
   onVaultChange
+}
+
+/** The open vault, for its own choice of calendars on this device. */
+async function calendarVault(): Promise<CalendarVaultRef | null> {
+  let current: PortableVault | RemoteVault
+  try {
+    current = activeVault()
+  } catch {
+    return null
+  }
+  const id = current instanceof PortableVault ? `local:${current.fs.syncKey}` : `remote:${current.name}`
+  return { key: await calendarVaultKey(id), name: current.name }
 }
 
 /** The open vault when S3 sync can use it, or why not. */
@@ -692,9 +710,15 @@ const portableBridge: ZenBridge = {
 
   // The person's calendars, read-only, for notes on meetings.
   calendarFeeds: () => listMobileCalendarFeeds(),
-  addCalendarFeed: (name, address) => addMobileCalendarFeed(name, address),
+  addCalendarFeed: async (name, address) => addMobileCalendarFeed(name, address, await calendarVault()),
   removeCalendarFeed: (id) => removeMobileCalendarFeed(id),
-  calendarMeetings: (fromIso, toIso) => mobileCalendarMeetings(fromIso, toIso),
+  calendarMeetings: async (fromIso, toIso) => mobileCalendarMeetings(fromIso, toIso, await calendarVault()),
+  // Each vault keeps its own choice of calendars: feeds and, where the host
+  // reads them, the phone's own calendars.
+  calendarSources: async () => mobileCalendarSources(await calendarVault()),
+  setVaultCalendars: async (ids) => chooseMobileCalendars(await calendarVault(), ids),
+  requestDeviceCalendarAccess: async () => requestMobileDeviceCalendarAccess(await calendarVault()),
+  openDeviceCalendarSettings: () => openMobileDeviceCalendarSettings(),
 
   getServerCapabilities: async (): Promise<ServerCapabilities | null> =>
     activeRemote()?.capabilities ?? null,

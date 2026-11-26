@@ -1,7 +1,12 @@
 import type {
   CalendarFeedSummary,
   CalendarMeeting,
-  CalendarMeetingsResult
+  CalendarMeetingsResult,
+  CalendarSource,
+  CalendarSourcesResult,
+  DeviceCalendarAccess,
+  DeviceCalendarInfo,
+  DeviceCalendarsHost
 } from '@zennotes/bridge-contract/calendar'
 import { readCalendarEvents } from './calendar-ics'
 import { randomUUID } from './random-uuid'
@@ -49,6 +54,15 @@ export interface CalendarFeedsServiceDependencies {
   now?: () => number
   /** How the host names itself in a sentence: "computer", "iPhone". */
   device?: string
+  /** The device's own calendars (EventKit on iPhone). Without it, only feeds. */
+  deviceCalendars?: DeviceCalendarsHost
+}
+
+/** The open vault a calendar choice belongs to. `key` is stable for the vault
+ *  on this device (a fingerprint of its root), never sent anywhere. */
+export interface CalendarVaultRef {
+  key: string
+  name: string
 }
 
 export interface CalendarFeedRecord {
@@ -58,10 +72,22 @@ export interface CalendarFeedRecord {
   addedAt: number
 }
 
-export interface CalendarFeedsFile {
-  version: 1
-  feeds: CalendarFeedRecord[]
+/** A vault's own choice of calendars, by source id (`feed:…`, `device:…`). */
+export interface CalendarVaultChoice {
+  sources: string[]
+  updatedAt: number
 }
+
+export interface CalendarFeedsFile {
+  version: 2
+  feeds: CalendarFeedRecord[]
+  /** By vault key. A vault without an entry shows every calendar. */
+  vaults: Record<string, CalendarVaultChoice>
+}
+
+export const FEED_SOURCE_PREFIX = 'feed:'
+export const DEVICE_SOURCE_PREFIX = 'device:'
+const MAX_CHOSEN = 200
 
 const CACHE_MS = 5 * 60_000
 const MAX_FEED_BYTES = 15 * 1024 * 1024
@@ -116,8 +142,10 @@ export class CalendarFeedsService {
     return (await this.read()).feeds.map(({ id, name, host }) => ({ id, name, host }))
   }
 
-  /** Reads the feed once before keeping it, so a wrong address is caught here. */
-  async add(rawName: unknown, rawAddress: unknown): Promise<CalendarFeedSummary> {
+  /** Reads the feed once before keeping it, so a wrong address is caught here.
+   *  A vault with its own choice of calendars gets the new one ticked, since
+   *  it was added from that vault's settings; other vaults' choices stay. */
+  async add(rawName: unknown, rawAddress: unknown, vault: CalendarVaultRef | null = null): Promise<CalendarFeedSummary> {
     const url = normalizeFeedAddress(rawAddress)
     const name = (typeof rawName === 'string' ? rawName.trim() : '').slice(0, 60) || url.hostname
     const current = await this.read()
@@ -131,19 +159,112 @@ export class CalendarFeedsService {
     }
     this.texts.set(id, { at: this.now(), text })
     const record: CalendarFeedRecord = { id, name, host: url.hostname, addedAt: this.now() }
-    await this.update((file) => ({ ...file, feeds: [...file.feeds, record] }))
+    await this.update((file) => {
+      const vaults = { ...file.vaults }
+      const choice = vault ? vaults[vault.key] : undefined
+      if (vault && choice) {
+        vaults[vault.key] = { sources: [...choice.sources, FEED_SOURCE_PREFIX + id], updatedAt: this.now() }
+      }
+      return { ...file, feeds: [...file.feeds, record], vaults }
+    })
     return { id, name, host: record.host }
   }
 
   async remove(id: unknown): Promise<void> {
     if (typeof id !== 'string' || !id) return
-    await this.update((file) => ({ ...file, feeds: file.feeds.filter((feed) => feed.id !== id) }))
+    const source = FEED_SOURCE_PREFIX + id
+    await this.update((file) => ({
+      ...file,
+      feeds: file.feeds.filter((feed) => feed.id !== id),
+      vaults: Object.fromEntries(
+        Object.entries(file.vaults).map(([key, choice]) => [
+          key,
+          { ...choice, sources: choice.sources.filter((entry) => entry !== source) }
+        ])
+      )
+    }))
     this.texts.delete(id)
     await this.dependencies.secrets.delete(id)
   }
 
-  /** Meetings overlapping the window from every feed. One feed failing never hides the others. */
-  async meetings(fromIso: unknown, toIso: unknown): Promise<CalendarMeetingsResult> {
+  /** Every calendar the vault can show, each marked with whether it does. */
+  async sources(vault: CalendarVaultRef | null): Promise<CalendarSourcesResult> {
+    const file = await this.read()
+    const choice = vault ? file.vaults[vault.key] : undefined
+    const chosen = choice ? new Set(choice.sources) : null
+    const access = await this.deviceAccess()
+    let deviceList: DeviceCalendarInfo[] = []
+    let error: string | null = null
+    if (access === 'granted') {
+      try {
+        deviceList = await this.deviceCalendarList()
+      } catch (failure) {
+        error = `ZenNotes could not list this ${this.device}’s calendars: ${(failure as Error).message}`
+      }
+    }
+    const sources: CalendarSource[] = [
+      ...deviceList.map((calendar) => ({
+        id: DEVICE_SOURCE_PREFIX + calendar.id,
+        kind: 'device' as const,
+        name: calendar.name,
+        detail: calendar.account,
+        color: calendar.color,
+        selected: false
+      })),
+      ...file.feeds.map((feed) => ({
+        id: FEED_SOURCE_PREFIX + feed.id,
+        kind: 'feed' as const,
+        name: feed.name,
+        detail: feed.host,
+        color: null,
+        selected: false
+      }))
+    ].map((source) => ({ ...source, selected: chosen ? chosen.has(source.id) : true }))
+    return {
+      vaultName: vault?.name ?? null,
+      customized: Boolean(choice),
+      device: { access, label: this.device, error },
+      sources
+    }
+  }
+
+  /** Saves the vault's own choice. Ids of calendars that are gone are dropped. */
+  async choose(vault: CalendarVaultRef | null, rawIds: unknown): Promise<CalendarSourcesResult> {
+    if (!vault) throw new CalendarFeedInputError('Open a vault to choose which calendars it shows.')
+    if (!Array.isArray(rawIds)) throw new CalendarFeedInputError('That list of calendars is not valid.')
+    const ids = [...new Set(rawIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length < 1024))]
+    if (ids.length > MAX_CHOSEN) throw new CalendarFeedInputError(`Choose at most ${MAX_CHOSEN} calendars.`)
+    const known = new Set((await this.sources(vault)).sources.map((source) => source.id))
+    // A device calendar the host could not list just now is kept as chosen:
+    // a passing failure must not wipe the person's choice.
+    const kept = ids.filter((id) => known.has(id) || id.startsWith(DEVICE_SOURCE_PREFIX))
+    await this.update((file) => ({
+      ...file,
+      vaults: { ...file.vaults, [vault.key]: { sources: kept, updatedAt: this.now() } }
+    }))
+    return this.sources(vault)
+  }
+
+  /** Shows the system's question for the device's calendars, once. */
+  async requestDeviceAccess(vault: CalendarVaultRef | null): Promise<CalendarSourcesResult> {
+    const host = this.dependencies.deviceCalendars
+    if (host) {
+      try {
+        await host.requestAccess()
+      } catch {
+        // The answer below says where access stands.
+      }
+    }
+    return this.sources(vault)
+  }
+
+  async openDeviceSettings(): Promise<void> {
+    await this.dependencies.deviceCalendars?.openSettings?.()
+  }
+
+  /** Meetings overlapping the window from the calendars the vault shows (all
+   *  of them while it has no choice). One calendar failing never hides the others. */
+  async meetings(fromIso: unknown, toIso: unknown, vault: CalendarVaultRef | null = null): Promise<CalendarMeetingsResult> {
     const from = new Date(typeof fromIso === 'string' ? fromIso : NaN)
     const to = new Date(typeof toIso === 'string' ? toIso : NaN)
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
@@ -154,23 +275,82 @@ export class CalendarFeedsService {
     }
     const timeZone = this.dependencies.timeZone?.() ?? Intl.DateTimeFormat().resolvedOptions().timeZone
     const result: CalendarMeetingsResult = { meetings: [], failures: [] }
-    const feeds = (await this.read()).feeds
-    await Promise.all(
-      feeds.map(async (feed) => {
+    const file = await this.read()
+    const choice = vault ? file.vaults[vault.key] : undefined
+    const chosen = choice ? new Set(choice.sources) : null
+    const shows = (id: string): boolean => (chosen ? chosen.has(id) : true)
+    const feeds = file.feeds.filter((feed) => shows(FEED_SOURCE_PREFIX + feed.id))
+    await Promise.all([
+      ...feeds.map(async (feed) => {
         try {
           const text = await this.feedText(feed)
           const events = readCalendarEvents(text, { from, to, defaultTimeZone: timeZone })
           for (const event of events) {
-            const meeting: CalendarMeeting = { ...event, feedId: feed.id, feedName: feed.name }
+            const meeting: CalendarMeeting = { ...event, feedId: FEED_SOURCE_PREFIX + feed.id, feedName: feed.name }
             result.meetings.push(meeting)
           }
         } catch (error) {
-          result.failures.push({ feedId: feed.id, feedName: feed.name, message: (error as Error).message })
+          result.failures.push({ feedId: FEED_SOURCE_PREFIX + feed.id, feedName: feed.name, message: (error as Error).message })
         }
-      })
-    )
+      }),
+      this.deviceMeetings(from, to, shows, result)
+    ])
     result.meetings.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.title.localeCompare(b.title)))
     return result
+  }
+
+  private async deviceMeetings(
+    from: Date,
+    to: Date,
+    shows: (id: string) => boolean,
+    result: CalendarMeetingsResult
+  ): Promise<void> {
+    const host = this.dependencies.deviceCalendars
+    if (!host || (await this.deviceAccess()) !== 'granted') return
+    const label = `Calendars on this ${this.device}`
+    try {
+      const calendars = (await this.deviceCalendarList()).filter((calendar) => shows(DEVICE_SOURCE_PREFIX + calendar.id))
+      if (!calendars.length) return
+      const names = new Map(calendars.map((calendar) => [calendar.id, calendar.name]))
+      const events = await host.events({
+        fromIso: from.toISOString(),
+        toIso: to.toISOString(),
+        calendarIds: calendars.map((calendar) => calendar.id)
+      })
+      for (const event of events) {
+        const name = names.get(event.calendarId)
+        if (name === undefined || !isDeviceEvent(event)) continue
+        const { calendarId, ...rest } = event
+        result.meetings.push({ ...rest, feedId: DEVICE_SOURCE_PREFIX + calendarId, feedName: name })
+      }
+    } catch (error) {
+      result.failures.push({ feedId: DEVICE_SOURCE_PREFIX, feedName: label, message: (error as Error).message })
+    }
+  }
+
+  private async deviceAccess(): Promise<DeviceCalendarAccess> {
+    const host = this.dependencies.deviceCalendars
+    if (!host) return 'unsupported'
+    try {
+      return await host.access()
+    } catch {
+      return 'unsupported'
+    }
+  }
+
+  private async deviceCalendarList(): Promise<DeviceCalendarInfo[]> {
+    const host = this.dependencies.deviceCalendars
+    if (!host) return []
+    const list = await host.calendars()
+    return list
+      .filter((calendar) => calendar && typeof calendar.id === 'string' && calendar.id && typeof calendar.name === 'string')
+      .map((calendar) => ({
+        id: calendar.id,
+        name: calendar.name || 'Untitled calendar',
+        account: typeof calendar.account === 'string' && calendar.account ? calendar.account : null,
+        color: typeof calendar.color === 'string' && /^#[0-9a-f]{6}$/i.test(calendar.color) ? calendar.color : null
+      }))
+      .sort((a, b) => (a.account ?? '').localeCompare(b.account ?? '') || a.name.localeCompare(b.name))
   }
 
   private async feedText(feed: CalendarFeedRecord): Promise<string> {
@@ -216,22 +396,26 @@ export class CalendarFeedsService {
 
   private async read(): Promise<CalendarFeedsFile> {
     if (this.cache) return this.cache
-    let parsed: Partial<CalendarFeedsFile> | null = null
+    type Stored = { version?: unknown; feeds?: unknown; vaults?: unknown }
+    let parsed: Stored | null = null
     try {
-      parsed = (await this.dependencies.store.load()) as Partial<CalendarFeedsFile> | null
+      parsed = (await this.dependencies.store.load()) as Stored | null
     } catch {
       // Damaged: no feeds.
     }
-    if (parsed?.version === 1 && Array.isArray(parsed.feeds)) {
+    // Version 1 had no per-vault choice, so every vault showed every feed:
+    // reading it with no choices keeps that.
+    if ((parsed?.version === 1 || parsed?.version === 2) && Array.isArray(parsed.feeds)) {
       this.cache = {
-        version: 1,
-        feeds: parsed.feeds.filter(
+        version: 2,
+        feeds: (parsed.feeds as CalendarFeedRecord[]).filter(
           (feed) => feed && typeof feed.id === 'string' && typeof feed.name === 'string' && typeof feed.host === 'string'
-        )
+        ),
+        vaults: readChoices(parsed.vaults)
       }
       return this.cache
     }
-    this.cache = { version: 1, feeds: [] }
+    this.cache = { version: 2, feeds: [], vaults: {} }
     return this.cache
   }
 
@@ -244,4 +428,33 @@ export class CalendarFeedsService {
     this.writes = run
     return run
   }
+}
+
+function readChoices(raw: unknown): Record<string, CalendarVaultChoice> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, CalendarVaultChoice> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const choice = value as Partial<CalendarVaultChoice> | null
+    if (!key || !choice || !Array.isArray(choice.sources)) continue
+    out[key] = {
+      sources: choice.sources.filter((id): id is string => typeof id === 'string'),
+      updatedAt: typeof choice.updatedAt === 'number' ? choice.updatedAt : 0
+    }
+  }
+  return out
+}
+
+/** A device event as the host sent it, checked before it reaches a note. */
+function isDeviceEvent(event: unknown): boolean {
+  const value = event as Record<string, unknown> | null
+  return Boolean(
+    value &&
+      typeof value.key === 'string' &&
+      typeof value.uid === 'string' &&
+      typeof value.title === 'string' &&
+      typeof value.start === 'string' &&
+      typeof value.end === 'string' &&
+      typeof value.allDay === 'boolean' &&
+      Array.isArray(value.attendees)
+  )
 }

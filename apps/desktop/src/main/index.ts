@@ -20,7 +20,7 @@ import {
 } from "electron";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { openAsBlob, promises as fsp, watch as watchPath } from "node:fs";
 import { homedir, hostname } from "node:os";
 import path from "node:path";
@@ -240,7 +240,7 @@ import {
   setCalendarFeedSecret,
 } from "./secret-store";
 import { S3SyncService } from "./s3-sync/service";
-import { CalendarFeedsService } from "./calendar-feeds";
+import { CalendarFeedsService, type CalendarVaultRef } from "./calendar-feeds";
 import { CloudAuthManager, resolveCloudBaseUrl } from "./cloud-auth";
 import { shouldForceGnomeLibsecret } from "./linux-password-store";
 import { CloudAuthLoopbackServer } from "./cloud-auth-loopback";
@@ -3913,6 +3913,19 @@ function getCalendarFeedsService(): CalendarFeedsService {
   return calendarFeedsService;
 }
 
+/** The vault this window shows, for its own choice of calendars. The key is
+ *  a fingerprint of the vault's folder, kept only on this computer. */
+function calendarVaultRef(): CalendarVaultRef | null {
+  const win = currentIpcWindow();
+  const vault = win ? windowVaults.vaultForWindow(win.id) : currentVault;
+  if (!vault) return null;
+  const root = isRemoteWorkspaceActive() ? `remote:${vault.root}` : path.resolve(vault.root);
+  return {
+    key: createHash("sha256").update(root).digest("hex").slice(0, 32),
+    name: vault.name || path.basename(vault.root),
+  };
+}
+
 /** The local vault this window shows, or why S3 sync cannot use it. */
 function s3SyncVaultRoot(): { root: string } | { reason: string } {
   if (isRemoteWorkspaceActive()) return { reason: "S3 sync is for local vaults." };
@@ -4879,13 +4892,18 @@ function registerIpc(): void {
   // the calendar and its host.
   handle(IPC.CALENDAR_FEEDS_LIST, async () => await getCalendarFeedsService().list());
   handle(IPC.CALENDAR_FEED_ADD, async (_e, name: unknown, address: unknown) =>
-    await getCalendarFeedsService().add(name, address),
+    await getCalendarFeedsService().add(name, address, calendarVaultRef()),
   );
   handle(IPC.CALENDAR_FEED_REMOVE, async (_e, id: unknown) => {
     await getCalendarFeedsService().remove(id);
   });
   handle(IPC.CALENDAR_MEETINGS, async (_e, fromIso: unknown, toIso: unknown) =>
-    await getCalendarFeedsService().meetings(fromIso, toIso),
+    await getCalendarFeedsService().meetings(fromIso, toIso, calendarVaultRef()),
+  );
+  // Each vault keeps its own choice of calendars on this computer.
+  handle(IPC.CALENDAR_SOURCES, async () => await getCalendarFeedsService().sources(calendarVaultRef()));
+  handle(IPC.CALENDAR_SET_VAULT, async (_e, ids: unknown) =>
+    await getCalendarFeedsService().choose(calendarVaultRef(), ids),
   );
   handle(IPC.APP_UPDATER_CHECK_WITH_UI, async () => {
     await runMenuUpdateCheck();

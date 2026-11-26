@@ -4484,14 +4484,14 @@ export function SettingsModal(): JSX.Element {
             title: "Calendars",
             description:
               "Show your meetings in the calendar panel and start notes on them.",
-            keywords: ["calendar", "meetings", "ics", "ical", "google", "outlook", "invite"],
+            keywords: ["calendar", "meetings", "ics", "ical", "google", "outlook", "invite", "icloud"],
             searchItems: [
               {
                 id: "calendar-feeds",
                 title: "Calendars for meeting notes",
                 description:
-                  "Add a calendar by its .ics address, or remove one.",
-                keywords: ["calendar", "ics", "webcal", "meeting notes", "attendees"],
+                  "Choose which calendars this vault shows, or add one by its .ics address.",
+                keywords: ["calendar", "ics", "webcal", "meeting notes", "attendees", "vault", "select"],
               },
             ],
             content: (

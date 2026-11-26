@@ -3,15 +3,17 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type {
   CalendarFeedSummary,
-  CalendarMeetingsResult
+  CalendarMeetingsResult,
+  CalendarSourcesResult
 } from '@zennotes/bridge-contract/calendar'
 import {
   CalendarFeedsService as SharedCalendarFeedsService,
   type CalendarFeedSecrets,
-  type CalendarFeedsFile
+  type CalendarFeedsFile,
+  type CalendarVaultRef
 } from '@zennotes/shared-domain/calendar-feeds'
 
-export type { CalendarFeedSecrets }
+export type { CalendarFeedSecrets, CalendarVaultRef }
 export { CalendarFeedInputError, normalizeFeedAddress } from '@zennotes/shared-domain/calendar-feeds'
 
 /**
@@ -80,15 +82,26 @@ export class CalendarFeedsService {
     return this.shared.list()
   }
 
-  add(rawName: unknown, rawAddress: unknown): Promise<CalendarFeedSummary> {
-    return this.shared.add(rawName, rawAddress)
+  add(rawName: unknown, rawAddress: unknown, vault: CalendarVaultRef | null = null): Promise<CalendarFeedSummary> {
+    return this.shared.add(rawName, rawAddress, vault)
   }
 
   remove(id: unknown): Promise<void> {
     return this.shared.remove(id)
   }
 
-  meetings(fromIso: unknown, toIso: unknown): Promise<CalendarMeetingsResult> {
-    return this.shared.meetings(fromIso, toIso)
+  /** From the calendars the vault shows (all while it has no choice of its own). */
+  meetings(fromIso: unknown, toIso: unknown, vault: CalendarVaultRef | null = null): Promise<CalendarMeetingsResult> {
+    return this.shared.meetings(fromIso, toIso, vault)
+  }
+
+  /** The vault's calendars. The Mac's own calendars are not read yet, so
+   *  these are the .ics feeds. */
+  sources(vault: CalendarVaultRef | null): Promise<CalendarSourcesResult> {
+    return this.shared.sources(vault)
+  }
+
+  choose(vault: CalendarVaultRef | null, ids: unknown): Promise<CalendarSourcesResult> {
+    return this.shared.choose(vault, ids)
   }
 }

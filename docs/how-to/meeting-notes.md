@@ -24,6 +24,26 @@ keeps it in your system's secure storage (Keychain, Credential Manager or the
 Secret Service) and shows only its name and host afterwards. To revoke it,
 reset the secret address in your calendar's settings and remove it here.
 
+## Use your iPhone's calendars
+
+On iPhone, Settings, then Vault, then **Calendars** also lists every calendar
+in the Calendar app (iCloud, Google, Exchange and subscribed calendars). Press
+**Allow calendar access** and choose **Allow Full Access**: "Add Events Only"
+can't read events. ZenNotes only reads them. If you said no earlier, turn it
+on under iOS Settings, Privacy & Security, Calendars.
+
+## Choose the calendars for each vault
+
+Each vault has its own ticks in **Calendars**, so a work vault can show your
+work calendar and a personal vault your family one. The choice is kept on each
+device, because a calendar on your iPhone isn't the same object on your Mac.
+
+- A vault you haven't changed shows every calendar. Press **None** and tick
+  the ones you want, or untick the ones you don't.
+- A calendar you add by address from a vault's settings is ticked in that
+  vault. Vaults that already have their own choice don't get it.
+- Removing a calendar removes it from every vault. Notes you wrote stay.
+
 ## Write notes on a meeting
 
 Open the calendar panel. The week under the month grid lists each day's
@@ -73,4 +93,5 @@ Tasks in a meeting note show in the task views like any other.
 - Recurring meetings, moved and cancelled instances, and time zones (including
   Outlook's Windows zone names) are handled.
 - A meeting note syncs like any other note, including with S3 sync.
-- The macOS Calendar app (EventKit) is not read yet.
+- The macOS Calendar app is not read yet. On a Mac, add calendars by address;
+  each vault still picks which of them it shows.

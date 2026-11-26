@@ -165,6 +165,8 @@ export const IPC = {
   CALENDAR_FEED_ADD: 'calendar-feeds:add',
   CALENDAR_FEED_REMOVE: 'calendar-feeds:remove',
   CALENDAR_MEETINGS: 'calendar-feeds:meetings',
+  CALENDAR_SOURCES: 'calendar-feeds:sources',
+  CALENDAR_SET_VAULT: 'calendar-feeds:set-vault',
   APP_UPDATER_CHECK_WITH_UI: 'app-updater:check-with-ui',
   APP_UPDATER_DOWNLOAD: 'app-updater:download',
   APP_UPDATER_INSTALL: 'app-updater:install',

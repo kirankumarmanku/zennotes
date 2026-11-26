@@ -87,7 +87,7 @@ import type {
   S3SyncSettingsInput,
   S3SyncStatus
 } from './s3-sync.js'
-import type { CalendarFeedSummary, CalendarMeetingsResult } from './calendar.js'
+import type { CalendarFeedSummary, CalendarMeetingsResult, CalendarSourcesResult } from './calendar.js'
 import type {
   CloudAccountConnectResult,
   CloudAccountStatus,
@@ -252,8 +252,18 @@ export interface ZenBridge {
   /** Checks the address answers with a calendar before keeping it. */
   addCalendarFeed?(name: string, address: string): Promise<CalendarFeedSummary>
   removeCalendarFeed?(id: string): Promise<void>
-  /** Meetings that overlap [fromIso, toIso), from every feed. */
+  /** Meetings that overlap [fromIso, toIso), from the calendars the open
+   *  vault shows (every calendar while it has no choice of its own). */
   calendarMeetings?(fromIso: string, toIso: string): Promise<CalendarMeetingsResult>
+  /** Every calendar the open vault can show, feeds and the device's own,
+   *  each marked with whether this vault shows it. */
+  calendarSources?(): Promise<CalendarSourcesResult>
+  /** Saves which calendars the open vault shows, on this device. */
+  setVaultCalendars?(sourceIds: string[]): Promise<CalendarSourcesResult>
+  /** Asks for read access to the device's own calendars (the system's question). */
+  requestDeviceCalendarAccess?(): Promise<CalendarSourcesResult>
+  /** Opens the app's page in the system Settings, to allow calendar access after a no. */
+  openDeviceCalendarSettings?(): Promise<void>
   /** Unsplash photo search for the cover picker, sent straight to
    *  api.unsplash.com with the person's own access key. A host without it
    *  shows no Unsplash tab. Never rejects: a failure comes back as its reason. */

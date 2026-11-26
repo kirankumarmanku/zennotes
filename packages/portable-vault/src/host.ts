@@ -17,6 +17,7 @@ import type {
   VaultInfo
 } from '@zennotes/bridge-contract/ipc'
 import type { ZenAppInfo, ZenBridge, ZenCapabilities } from '@zennotes/bridge-contract/bridge'
+import type { DeviceCalendarsHost } from '@zennotes/bridge-contract/calendar'
 
 // ---------------------------------------------------------------------------
 // Vault files
@@ -403,6 +404,9 @@ export interface PortableHost {
   preferences: HostStorage
   secrets: SecretStorage
   vaults: HostVaults
+  /** The device's own calendars, read-only (EventKit on iPhone). A host
+   *  without it offers only .ics feeds. */
+  deviceCalendars?: DeviceCalendarsHost
 }
 
 let installed: PortableHost | null = null
