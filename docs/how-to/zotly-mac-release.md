@@ -54,10 +54,16 @@ choose **Always Allow**.
    certificate that workflow uses cannot sign a Mac app outside the App Store,
    so the Developer ID one is a secret of its own.
 
-4. Run **Zotly Mac** from the Actions tab: the `.dmg` comes back as the
-   `zotly-mac` workflow artifact. Pushing a `zotly-mac-v<anything>` tag also
-   publishes a GitHub release on the fork with the `.dmg`, `.zip` and
-   `latest-mac.yml`.
+4. Run **Zotly Mac** from the Actions tab. Each run publishes a release on
+   this fork, the way ZotlyApp publishes Zotly on its public releases repo,
+   and marks it latest, so these links always download the newest build:
+
+   - Apple silicon: https://github.com/kirankumarmanku/zennotes/releases/latest/download/ZenNotes-mac-arm64.dmg
+   - Intel: https://github.com/kirankumarmanku/zennotes/releases/latest/download/ZenNotes-mac-x64.dmg
+
+   The fork is public, so anyone with a link can download the app. Untick
+   **Publish** to keep a run's build as the `zotly-mac` workflow artifact
+   only. A pushed `zotly-mac-v<anything>` tag publishes under that tag.
 
 The app's version is `apps/desktop/package.json`'s; the build number
 (`CFBundleVersion`) is the commit count, as in ZotlyApp. The in-app updater

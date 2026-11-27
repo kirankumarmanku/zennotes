@@ -4,8 +4,14 @@ name: Zotly Mac
 # scripts/release-macos.sh builds Zotly: Developer ID certificate, hardened
 # runtime, notarytool with the App Store Connect key, app and .dmg stapled.
 #
-# Run it by hand from the Actions tab (the .dmg lands as a workflow artifact),
-# or push a zotly-mac-v* tag to also publish a GitHub release on this fork.
+# Published the way ZotlyApp publishes Zotly: a GitHub release on a public
+# repository (here this fork, which is public), so the .dmg downloads with no
+# sign-in. Each run makes or updates a zotly-mac-v<version>-<build> release
+# and marks it latest, so these links always give the newest build:
+#   https://github.com/kirankumarmanku/zennotes/releases/latest/download/ZenNotes-mac-arm64.dmg
+#   https://github.com/kirankumarmanku/zennotes/releases/latest/download/ZenNotes-mac-x64.dmg
+# Run it from the Actions tab (untick "Publish" to keep the build as a
+# workflow artifact only), or push a zotly-mac-v* tag.
 # Upstream's release.yml (v* tags) needs upstream's certificates; this one
 # does not use them.
 #
@@ -20,11 +26,17 @@ on:
         description: "Architecture"
         required: true
         type: choice
-        default: arm64
+        # Both, so the link opens on Apple silicon and Intel Macs alike.
+        default: both
         options:
+          - both
           - arm64
           - x64
-          - both
+      publish:
+        description: "Publish a public download on this fork's releases"
+        required: true
+        type: boolean
+        default: true
   push:
     tags:
       - "zotly-mac-v*"
@@ -123,15 +135,39 @@ jobs:
           compression-level: 0
 
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/zotly-mac-v')
+        if: startsWith(github.ref, 'refs/tags/zotly-mac-v') || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          REF_TAG: ${{ startsWith(github.ref, 'refs/tags/zotly-mac-v') && github.ref_name || '' }}
         run: |
-          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${TAG}" \
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          build="$(git rev-list --count HEAD)"
+          tag="${REF_TAG:-zotly-mac-v${version}-${build}}"
+          # Fixed names beside the versioned files, so releases/latest/download/
+          # links stay the same from one build to the next.
+          for dmg in zotly-mac/*.dmg; do
+            case "${dmg}" in
+              *-arm64.dmg) cp "${dmg}" zotly-mac/ZenNotes-mac-arm64.dmg ;;
+              *-x64.dmg) cp "${dmg}" zotly-mac/ZenNotes-mac-x64.dmg ;;
+            esac
+          done
+          if ! gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${tag}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "ZenNotes for Mac (Zotly) ${TAG#zotly-mac-v}" \
-              --notes "Signed with Developer ID and notarized. Download the .dmg for your Mac (arm64 for Apple silicon)."
+              --target "${GITHUB_SHA}" \
+              --title "ZenNotes for Mac (Zotly) ${version} (${build})" \
+              --notes "Signed with Developer ID and notarized. ZenNotes-mac-arm64.dmg is for Apple silicon Macs, ZenNotes-mac-x64.dmg for Intel Macs."
           fi
-          gh release upload "${TAG}" zotly-mac/* --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload "${tag}" zotly-mac/* --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release edit "${tag}" --repo "${GITHUB_REPOSITORY}" --latest
+          base="https://github.com/${GITHUB_REPOSITORY}/releases"
+          {
+            echo "### ZenNotes for Mac ${version} (${build})"
+            echo
+            echo "- Release: ${base}/tag/${tag}"
+            for name in ZenNotes-mac-arm64.dmg ZenNotes-mac-x64.dmg; do
+              if [ -f "zotly-mac/${name}" ]; then
+                echo "- Latest ${name}: ${base}/latest/download/${name}"
+              fi
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"
