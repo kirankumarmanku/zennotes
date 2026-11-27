@@ -17,43 +17,17 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Annotation, EditorSelection, EditorState, type Transaction } from '@codemirror/state'
-import { EditorView, highlightActiveLine, keymap, tooltips } from '@codemirror/view'
-import { Vim, getCM, vim } from '@replit/codemirror-vim'
-import { history } from '@codemirror/commands'
-import { autocompletion, completionStatus } from '@codemirror/autocomplete'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { Annotation, EditorSelection, EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { Vim, getCM } from '@replit/codemirror-vim'
+import { completionStatus } from '@codemirror/autocomplete'
 import { wikilinkNoteName } from '@shared/unresolved-links'
 import { useStore } from '../store'
-import { noteEditingLockExtension, noteEditingSync, refreshNoteEditingLock } from '../lib/note-lifecycle-lock'
-import { scrollerClickFocus } from '../lib/cm-scroller-click-focus'
-import { vimAwareMarkdownKeymap } from '../lib/cm-vim-default-keymap'
-import { isTouchPrimaryDevice, vimImeGuard } from '../lib/cm-vim-ime-guard'
-import { vimVisualHighlightExtension } from '../lib/cm-vim-visual-highlight'
-import { noteMarkdown } from '../lib/cm-markdown-language'
-import { customCodeFenceHighlightExtension } from '../lib/cm-custom-code-languages'
-import { markdownLinkExtension } from '../lib/cm-markdown-links'
-import { listIndentWidth, markdownListIndentPlugin } from '../lib/cm-markdown-list-indent'
-import { livePreviewPlugin } from '../lib/cm-live-preview'
-import { sourceRevealExtension } from '../lib/cm-source-reveal'
-import { frontmatterStyle, frontmatterTagExtension } from '../lib/cm-frontmatter'
-import { slashCommandRender, slashCommandSource } from '../lib/cm-slash-commands'
-import { calloutTypeSource } from '../lib/cm-callouts'
-import { dateShortcutSource } from '../lib/cm-date-shortcuts'
-import { wikilinkBlockSource, wikilinkHeadingSource, wikilinkSource } from '../lib/cm-wikilinks'
-import { hashtagSource } from '../lib/cm-hashtag-complete'
-import { frontmatterTagSource } from '../lib/cm-frontmatter-tag-complete'
-import { completionKeymapExtension, completionNavKeymap } from '../lib/cm-completion-nav'
-import { editorTabSize } from '../lib/editor-tab-size'
-import { appMarkdownSnippetExtension } from '../lib/markdown-snippets-config'
-import { cursorDrawSelection } from '../lib/cm-cursor-blink'
-import { formatKeymapBinding, getKeymapBinding, matchesShortcutBinding } from '../lib/keymaps'
-import { keyBindingsFor } from '../lib/vim-half-page-keymap'
+import { formatKeymapBinding, matchesShortcutBinding } from '../lib/keymaps'
 import { isEditorInsertMode, isEditorVisualMode } from '../lib/vim-nav'
 import { linkAnchorOffset, linkCreateDestination } from '../lib/link-popover'
 import { getSystemFolderLabel } from '../lib/system-folder-labels'
 import {
-  openLinkPopoverAtCursor,
   pointerEnteredLinkPopover,
   pointerLeftLinkPopover,
   resetLinkPopoverHover
@@ -63,7 +37,7 @@ import { openWikilinkTarget } from '../lib/wikilink-navigation'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { Button, IconButton } from './ui'
 import { ArrowUpRightIcon, CloseIcon, LinkIcon } from './icons'
-import { buildReferenceKeymap, paperHighlight } from './PinnedReferencePane'
+import { buildEmbeddedNoteExtensions, syncEmbeddedNoteBody } from './InlineNoteEditor'
 
 const programmatic = Annotation.define<boolean>()
 
@@ -411,7 +385,6 @@ function PopoverNoteEditor({
   keymapOverrides: ReturnType<typeof useStore.getState>['keymapOverrides']
 }): JSX.Element {
   const content = useStore((s) => s.noteContents[path] ?? null)
-  const updateNoteBody = useStore((s) => s.updateNoteBody)
   const pathRef = useRef(path)
   pathRef.current = path
 
@@ -423,73 +396,14 @@ function PopoverNoteEditor({
         return
       }
       if (viewRef.current) return
-      const s0 = useStore.getState()
-      const body = s0.noteContents[path]?.body ?? ''
+      const body = useStore.getState().noteContents[path]?.body ?? ''
       const state = EditorState.create({
         doc: body,
-        extensions: [
-          noteEditingLockExtension(() => ({ vault: useStore.getState().vault, path: pathRef.current })),
-          appMarkdownSnippetExtension(),
-          sourceRevealExtension,
-          s0.vimMode ? vim() : [],
-          vimImeGuard(() => useStore.getState().vimBlockImeInNormalMode && !isTouchPrimaryDevice()),
-          vimVisualHighlightExtension,
-          history(),
-          scrollerClickFocus,
-          cursorDrawSelection(s0.cursorBlink),
-          editorTabSize(s0.editorTabSize),
-          listIndentWidth(s0.editorTabSize),
-          highlightActiveLine(),
-          EditorView.lineWrapping,
-          noteMarkdown(),
-          customCodeFenceHighlightExtension,
-          markdownLinkExtension,
-          vimAwareMarkdownKeymap,
-          markdownListIndentPlugin,
-          frontmatterStyle,
-          frontmatterTagExtension,
-          syntaxHighlighting(paperHighlight),
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          s0.livePreview ? livePreviewPlugin : [],
-          tooltips({ parent: document.body }),
-          autocompletion({
-            defaultKeymap: false,
-            override: [
-              slashCommandSource,
-              calloutTypeSource,
-              dateShortcutSource,
-              frontmatterTagSource,
-              hashtagSource,
-              wikilinkSource,
-              wikilinkHeadingSource,
-              wikilinkBlockSource
-            ],
-            addToOptions: [{ render: slashCommandRender.render, position: 0 }],
-            icons: false,
-            optionClass: (completion) => {
-              const kind = (completion as { _kind?: string })._kind
-              if (kind === 'wikilink') return 'wikilink-cmd-option'
-              if (kind === 'callout') return 'callout-cmd-option'
-              return 'slash-cmd-option'
-            }
-          }),
-          completionNavKeymap,
-          completionKeymapExtension,
-          keymap.of([
-            // The popover for a link inside the popover replaces this one,
-            // so a chain of notes can be followed without leaving the note
-            // underneath.
-            ...keyBindingsFor(getKeymapBinding(keymapOverrides, 'editor.linkPopover'), (view) =>
-              openLinkPopoverAtCursor(view)
-            )
-          ]),
-          buildReferenceKeymap(s0.vimMode, keymapOverrides),
-          EditorView.updateListener.of((upd) => {
-            if (!upd.docChanged) return
-            if (upd.transactions.some((tr: Transaction) => tr.annotation(programmatic))) return
-            updateNoteBody(pathRef.current, upd.state.doc.toString())
-          })
-        ]
+        extensions: buildEmbeddedNoteExtensions({
+          getPath: () => pathRef.current,
+          programmatic,
+          keymapOverrides
+        })
       })
       const view = new EditorView({ state, parent: el })
       viewRef.current = view
@@ -503,18 +417,7 @@ function PopoverNoteEditor({
   useEffect(() => {
     const view = viewRef.current
     if (!view || !content) return
-    const next = content.body
-    if (view.state.doc.toString() === next) return
-    const sel = view.state.selection.main
-    refreshNoteEditingLock(view)
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: next },
-      annotations: [programmatic.of(true), noteEditingSync.of(true)],
-      selection: {
-        anchor: Math.min(sel.anchor, next.length),
-        head: Math.min(sel.head, next.length)
-      }
-    })
+    syncEmbeddedNoteBody(view, content.body, programmatic)
   }, [content?.body, viewRef])
 
   // Place the cursor and, when the popover was opened from a key, take the

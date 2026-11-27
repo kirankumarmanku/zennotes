@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NoteMeta } from '@shared/ipc'
 import { parseTasksFromBody } from '@shared/tasks'
+import { EditorView } from '@codemirror/view'
 import { useStore } from '../store'
 import { dailyNoteLocationForDate } from '../lib/vault-layout'
 import { CalendarPanel } from './CalendarPanel'
@@ -105,15 +106,23 @@ describe('CalendarPanel: a day on a touch screen', () => {
     expect(isoDate(openDailyNoteForDate.mock.calls[0][0])).toBe(isoDate(tomorrow))
   })
 
-  it("opens an existing day's note on the tap that lands on the selected day", async () => {
+  it("shows an existing day's note in its card, then opens it on the next tap", async () => {
     useStore.setState({ notes: [dailyNote(today)] })
     const onOpen = vi.fn()
     act(() => root.render(createElement(CalendarPanel, { note: null, onOpen })))
     tap(day(today), 'touch')
     await act(async () => {})
+    expect(document.querySelector('[data-calendar-day-card]')?.getAttribute('data-calendar-day-card-path')).toBe(
+      dailyNote(today).path
+    )
+    expect(openDailyNoteForDate).not.toHaveBeenCalled()
+
+    tap(day(today), 'touch')
+    await act(async () => {})
     expect(confirmApp).not.toHaveBeenCalled()
     expect(openDailyNoteForDate).toHaveBeenCalledTimes(1)
     expect(onOpen).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-calendar-day-card]')).toBeNull()
   })
 
   it('stays open when the new day is declined', async () => {
@@ -159,6 +168,101 @@ describe('CalendarPanel: a day on a touch screen', () => {
     const input = host.querySelector('input[placeholder^="Add a task for"]')
     expect(input).not.toBeNull()
     expect(document.activeElement).toBe(input)
+  })
+})
+
+describe("CalendarPanel: the day card, to read and write a day's note", () => {
+  let host: HTMLDivElement
+  let root: Root
+  let originalState: ReturnType<typeof useStore.getState>
+  const today = new Date()
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
+  const dayAfter = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2)
+
+  beforeEach(() => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+    Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect()
+    })
+    originalState = useStore.getState()
+    const settings = originalState.vaultSettings
+    const todays = dailyNote(today)
+    const tomorrows = dailyNote(tomorrow)
+    useStore.setState({
+      vaultSettings: { ...settings, dailyNotes: { ...settings.dailyNotes, enabled: true } },
+      notes: [todays, tomorrows],
+      noteContents: {
+        [todays.path]: { ...todays, body: 'Today, a long day.\n'.repeat(40) },
+        [tomorrows.path]: { ...tomorrows, body: 'Dentist at 9.' }
+      },
+      noteDirty: {},
+      vaultTasks: [],
+      tasksLoading: true,
+      vimMode: false,
+      livePreview: false
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    host.remove()
+    useStore.setState(originalState, true)
+  })
+
+  const cell = (date: Date): Element => host.querySelector(`[data-cal-day="${isoDate(date)}"]`)!
+  const card = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-calendar-day-card]')
+  const cardView = (): EditorView => EditorView.findFromDOM(card()!.querySelector<HTMLElement>('.cm-editor')!)!
+
+  it('opens on a click, scrolls inside, and writes the note as you type', async () => {
+    act(() => root.render(createElement(CalendarPanel, { note: null })))
+    tap(cell(tomorrow), 'mouse')
+    await act(async () => {})
+    expect(card()?.getAttribute('data-calendar-day-card-path')).toBe(dailyNote(tomorrow).path)
+    // The note scrolls inside the card, which keeps to the viewport.
+    expect(card()!.querySelector('.zn-inline-note')).not.toBeNull()
+    expect(card()!.style.maxHeight).not.toBe('')
+    expect(cardView().state.doc.toString()).toBe('Dentist at 9.')
+    act(() => {
+      const view = cardView()
+      view.dispatch({ changes: { from: view.state.doc.length, insert: ' Bring the form.' } })
+    })
+    expect(useStore.getState().noteContents[dailyNote(tomorrow).path]?.body).toBe('Dentist at 9. Bring the form.')
+    expect(useStore.getState().noteDirty[dailyNote(tomorrow).path]).toBe(true)
+  })
+
+  it('follows the day clicked next, and goes away on a day with no note', async () => {
+    act(() => root.render(createElement(CalendarPanel, { note: null })))
+    tap(cell(tomorrow), 'mouse')
+    await act(async () => {})
+    tap(cell(today), 'mouse')
+    await act(async () => {})
+    expect(card()?.getAttribute('data-calendar-day-card-path')).toBe(dailyNote(today).path)
+    tap(cell(dayAfter), 'mouse')
+    await act(async () => {})
+    expect(card()).toBeNull()
+  })
+
+  it('closes on Escape and on a press outside it', async () => {
+    act(() => root.render(createElement(CalendarPanel, { note: null })))
+    tap(cell(tomorrow), 'mouse')
+    await act(async () => {})
+    act(() => {
+      card()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(card()).toBeNull()
+
+    tap(cell(tomorrow), 'mouse')
+    await act(async () => {})
+    expect(card()).not.toBeNull()
+    act(() => {
+      document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    })
+    expect(card()).toBeNull()
   })
 })
 

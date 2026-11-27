@@ -13,7 +13,7 @@ import { runNoteLifecycleAction } from '../lib/note-lifecycle-actions'
  * we read the visible month's notes lazily (preferring the in-memory cache) and
  * memoise them by `updatedAt:size` so edits invalidate cleanly.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { NoteContent, NoteMeta } from '@shared/ipc'
 import {
   filterTasksForDisplay,
@@ -51,6 +51,8 @@ import { usePanelResize } from '../lib/use-panel-resize'
 import { PanelResizeHandle } from './PanelResizeHandle'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 import { LazyNoteHoverPreview as NoteHoverPreview } from './LazyNoteHoverPreview'
+import { CalendarDayCard } from './CalendarDayCard'
+import { dayCardPlacement, type DayCardPlacement } from '../lib/calendar-day-card'
 import { buildTaskMenuItems } from '../lib/task-context-menu'
 import { taskTail } from '../lib/task-tail'
 import {
@@ -424,6 +426,68 @@ export function CalendarPanel({
   }, [])
   useEffect(() => clearHover, [clearHover])
 
+  // --- Day card ------------------------------------------------------------
+  // A click on a day that has a note opens that note in a card, to read and
+  // write without leaving the calendar. It follows the selected day (arrow
+  // keys, a click on another day) and closes on Escape, its close button or
+  // a click outside it.
+  const [cardIso, setCardIso] = useState<string | null>(null)
+  const [cardPlacement, setCardPlacement] = useState<DayCardPlacement | null>(null)
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const cardMeta = cardIso && dailyEnabled ? dailyByDate.get(cardIso) : undefined
+  const showDayCard = useCallback(
+    (iso: string) => {
+      clearHover()
+      setCardIso(dailyByDate.has(iso) ? iso : null)
+    },
+    [dailyByDate, clearHover]
+  )
+  const closeDayCard = useCallback((restoreFocus: boolean) => {
+    setCardIso(null)
+    if (restoreFocus) panelRef.current?.focus({ preventScroll: true })
+  }, [])
+  // The card goes with the selected day; a day with no note has no card.
+  useEffect(() => {
+    setCardIso((cur) => (cur === null || cur === selectedIso ? cur : dailyByDate.has(selectedIso) ? selectedIso : null))
+  }, [selectedIso, dailyByDate])
+  const placeDayCard = useCallback(() => {
+    if (!cardIso) return
+    const panel = panelRef.current
+    const day =
+      panel?.querySelector<HTMLElement>(`[data-cal-day="${cardIso}"]`) ??
+      panel?.querySelector<HTMLElement>(`[data-cal-agenda-day="${cardIso}"]`) ??
+      panel
+    if (!panel || !day) return
+    setCardPlacement(
+      dayCardPlacement(panel.getBoundingClientRect(), day.getBoundingClientRect(), {
+        width: window.innerWidth,
+        height: window.innerHeight
+      })
+    )
+  }, [cardIso])
+  useLayoutEffect(() => {
+    placeDayCard()
+  }, [placeDayCard, anchor])
+  useEffect(() => {
+    if (!cardIso) return
+    window.addEventListener('resize', placeDayCard)
+    return () => window.removeEventListener('resize', placeDayCard)
+  }, [cardIso, placeDayCard])
+  // A press outside the card closes it, except on the calendar's days, whose
+  // own click moves the card, and on menus the card's editor opened.
+  useEffect(() => {
+    if (!cardMeta) return
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (cardRef.current?.contains(target)) return
+      if (target.closest('.cm-tooltip, [data-link-popover], [data-cal-day], [data-cal-agenda-day]')) return
+      setCardIso(null)
+    }
+    window.addEventListener('pointerdown', onPointerDown, true)
+    return () => window.removeEventListener('pointerdown', onPointerDown, true)
+  }, [cardMeta])
+
   // --- Context menu --------------------------------------------------------
   const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
   const trashNote = useCallback(async (meta: NoteMeta) => {
@@ -434,6 +498,7 @@ export function CalendarPanel({
       if (!dailyEnabled) return
       e.preventDefault()
       clearHover()
+      setCardIso(null)
       const meta = dailyByDate.get(iso)
       const items: ContextMenuItem[] = meta
         ? [
@@ -1050,12 +1115,26 @@ export function CalendarPanel({
                     const touch = touchPressRef.current
                     touchPressRef.current = false
                     if (!dailyEnabled) return
-                    if (touch && iso === selectedIso) void openOrCreateDay(day, iso)
-                    else setSelectedIso(iso)
+                    // A day with a note shows it in the card first; a second
+                    // tap on the day the card shows opens it full size.
+                    if (touch && iso === selectedIso && (!dayMeta || cardIso === iso)) {
+                      setCardIso(null)
+                      void openOrCreateDay(day, iso)
+                      return
+                    }
+                    setSelectedIso(iso)
+                    showDayCard(iso)
                   }}
-                  onDoubleClick={() => void openOrCreateDay(day, iso)}
+                  onDoubleClick={() => {
+                    setCardIso(null)
+                    void openOrCreateDay(day, iso)
+                  }}
                   onContextMenu={(e) => openDayMenu(e, day, iso)}
-                  onMouseEnter={(e) => armHover(e.currentTarget, dayMeta)}
+                  onMouseEnter={(e) => {
+                    // A tap fires this too; the card, not the glance, answers it.
+                    if (touchPressRef.current || cardIso) return
+                    armHover(e.currentTarget, dayMeta)
+                  }}
                   onMouseLeave={clearHover}
                   onDragOver={(e) => {
                     if (!dragTaskRef.current || !dailyEnabled) return
@@ -1217,7 +1296,10 @@ export function CalendarPanel({
                 >
                   <button
                     type="button"
-                    onClick={() => setSelectedIso(iso)}
+                    onClick={() => {
+                      setSelectedIso(iso)
+                      if (dailyEnabled) showDayCard(iso)
+                    }}
                     className={[
                       'flex w-full items-center justify-between rounded px-1.5 py-0.5 text-left text-2xs font-semibold uppercase tracking-wide transition-colors',
                       isSel ? 'text-ink-900' : 'text-ink-400 hover:text-ink-700',
@@ -1297,7 +1379,26 @@ export function CalendarPanel({
       {/* The day's note drawn as the note, the same preview a link gets. The
           index excerpt runs every line together, so a day's plan would read
           as one paragraph. */}
-      {hover && <NoteHoverPreview note={hover.meta} anchorRect={hover.rect} />}
+      {hover && !cardMeta && <NoteHoverPreview note={hover.meta} anchorRect={hover.rect} />}
+
+      {cardMeta && cardPlacement && (
+        <CalendarDayCard
+          ref={cardRef}
+          note={cardMeta}
+          dateLabel={parseIsoDate(cardIso!).toLocaleDateString(undefined, {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric'
+          })}
+          placement={cardPlacement}
+          onOpen={() => {
+            const iso = cardIso!
+            setCardIso(null)
+            void openOrCreateDay(parseIsoDate(iso), iso)
+          }}
+          onClose={closeDayCard}
+        />
+      )}
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />

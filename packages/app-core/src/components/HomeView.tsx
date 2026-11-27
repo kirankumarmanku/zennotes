@@ -11,7 +11,6 @@ import {
   useCalendarMeetings
 } from '../lib/calendar-meetings'
 import {
-  dailyNotePreview,
   daySummary,
   meetingsAhead,
   meetingsOnDay,
@@ -31,6 +30,7 @@ import {
   type FavoriteItem
 } from '../lib/vault-layout'
 import { colorGlyphClassById, resolveFolderColorGlyphClass } from './FolderColors'
+import { InlineNoteEditor } from './InlineNoteEditor'
 import { iconOptionById, resolveFolderIconOption } from './FolderIcons'
 import {
   ArrowUpRightIcon,
@@ -117,6 +117,7 @@ export function HomeView({
   const openWeeklyNoteForDate = useStore((s) => s.openWeeklyNoteForDate)
   const openMeetingNote = useStore((s) => s.openMeetingNote)
   const setVaultSettings = useStore((s) => s.setVaultSettings)
+  const ensureDailyNoteForDate = useStore((s) => s.ensureDailyNoteForDate)
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -213,19 +214,36 @@ export function HomeView({
     () => (dailyNotesOn ? findDailyNoteForDate(notes, vaultSettings, todayDate) : null),
     [dailyNotesOn, notes, vaultSettings, todayDate]
   )
+  // Home's Today card is the way in to the day, so it turns daily notes on
+  // for a vault that has them off (the card says so).
+  const ensureDailyNotesOn = useCallback(async (): Promise<boolean> => {
+    if (useStore.getState().vaultSettings?.dailyNotes?.enabled) return true
+    const current = useStore.getState().vaultSettings
+    return setVaultSettings({
+      ...current,
+      dailyNotes: { ...current.dailyNotes, enabled: true }
+    })
+  }, [setVaultSettings])
   const openDayNote = useCallback(async (): Promise<void> => {
-    // Home's Today card is the way in to the day, so it turns daily notes on
-    // for a vault that has them off (the card says so) and then opens today's.
-    if (!useStore.getState().vaultSettings?.dailyNotes?.enabled) {
-      const current = useStore.getState().vaultSettings
-      const saved = await setVaultSettings({
-        ...current,
-        dailyNotes: { ...current.dailyNotes, enabled: true }
-      })
-      if (!saved) return
-    }
+    if (!(await ensureDailyNotesOn())) return
     await openTodayDailyNote()
-  }, [setVaultSettings, openTodayDailyNote])
+  }, [ensureDailyNotesOn, openTodayDailyNote])
+  // Today's note is written right on Home, as in the older Zotly app. A day
+  // with no note yet starts one from the card (its template included) and
+  // puts the cursor at its end; the rest of the day it is just there to type in.
+  const [startedPath, setStartedPath] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
+  const startDayNote = useCallback(async (): Promise<void> => {
+    if (starting) return
+    setStarting(true)
+    try {
+      if (!(await ensureDailyNotesOn())) return
+      const meta = await ensureDailyNoteForDate(todayDate)
+      if (meta) setStartedPath(meta.path)
+    } finally {
+      setStarting(false)
+    }
+  }, [starting, ensureDailyNotesOn, ensureDailyNoteForDate, todayDate])
 
   // Today's meetings from the calendars this vault shows (Settings > Vault >
   // Calendars). Hosts that read no calendars leave the section out.
@@ -328,6 +346,8 @@ export function HomeView({
   // Roving focus across the recent-note + task rows (`[data-home-item]`).
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
+      // Today's note takes its own keys: arrows and j/k move in the text.
+      if ((e.target as HTMLElement | null)?.closest?.('[data-inline-note-editor]')) return
       const down = e.key === 'ArrowDown' || (vimMode && e.key === 'j')
       const up = e.key === 'ArrowUp' || (vimMode && e.key === 'k')
       if (!down && !up) return
@@ -400,37 +420,64 @@ export function HomeView({
         </div>
 
         <section className="mb-9" data-home-section="day-note">
-          <SectionLabel icon={<CalendarIcon width={13} height={13} />} text="Today" />
-          <ul className="mt-1.5 space-y-0.5">
-            <li>
-              <button
-                type="button"
-                data-home-item
-                data-home-kind="day-note"
-                {...(dayNote ? { 'data-home-note-path': dayNote.path } : {})}
-                onClick={() => void openDayNote()}
-                className="group flex w-full flex-col items-start gap-0.5 rounded-lg border border-paper-300/70 bg-paper-100/60 px-3 py-2.5 text-left transition-colors hover:bg-paper-200/60 focus:bg-paper-200/70 focus:outline-none"
-              >
-                <span className="flex w-full items-center gap-2 text-sm font-medium text-ink-800">
-                  <span className="min-w-0 flex-1 truncate">
-                    {dayNote ? dayNote.title || 'Today' : "Start today's note"}
+          <SectionLabel
+            icon={<CalendarIcon width={13} height={13} />}
+            text="Today"
+            trailing={
+              dayNote ? (
+                <button
+                  type="button"
+                  data-home-item
+                  data-home-kind="day-note"
+                  data-home-note-path={dayNote.path}
+                  onClick={() => void openDayNote()}
+                  title="Open today's note in the editor"
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-ink-500 transition-colors hover:bg-paper-200/70 hover:text-ink-800 focus:bg-paper-200/70 focus:outline-none"
+                >
+                  <span>Open</span>
+                  <ArrowUpRightIcon width={11} height={11} />
+                </button>
+              ) : null
+            }
+          />
+          {dayNote ? (
+            <div
+              data-home-day-note
+              className="mt-1.5 rounded-lg border border-paper-300/70 bg-paper-100/60 transition-colors focus-within:border-paper-400/80 focus-within:bg-paper-100"
+            >
+              <InlineNoteEditor
+                key={dayNote.path}
+                path={dayNote.path}
+                focus={startedPath === dayNote.path}
+                label="Today's note"
+                hint="Write about today…"
+                className="max-h-[24rem] min-h-[5.5rem]"
+              />
+            </div>
+          ) : (
+            <ul className="mt-1.5 space-y-0.5">
+              <li>
+                <button
+                  type="button"
+                  data-home-item
+                  data-home-kind="day-note"
+                  data-home-day-start
+                  disabled={starting}
+                  onClick={() => void startDayNote()}
+                  className="group flex w-full flex-col items-start gap-0.5 rounded-lg border border-dashed border-paper-300/80 bg-paper-100/40 px-3 py-2.5 text-left transition-colors hover:bg-paper-200/60 focus:bg-paper-200/70 focus:outline-none"
+                >
+                  <span className="text-sm font-medium text-ink-800">
+                    {starting ? 'Starting today\'s note…' : 'Write today\'s note'}
                   </span>
-                  <ArrowUpRightIcon
-                    width={12}
-                    height={12}
-                    className="shrink-0 text-ink-400 opacity-0 group-hover:opacity-100"
-                  />
-                </span>
-                <span className="w-full text-xs text-ink-400" data-home-day-preview>
-                  {dayNote
-                    ? dailyNotePreview(dayNote.excerpt) || 'Nothing written yet today.'
-                    : dailyNotesOn
-                      ? 'A note for today, in Daily Notes.'
-                      : 'Turns on daily notes for this vault, then opens today\'s.'}
-                </span>
-              </button>
-            </li>
-          </ul>
+                  <span className="w-full text-xs text-ink-400" data-home-day-preview>
+                    {dailyNotesOn
+                      ? 'Starts a note for today, in Daily Notes, right here.'
+                      : 'Turns on daily notes for this vault and starts today\'s, right here.'}
+                  </span>
+                </button>
+              </li>
+            </ul>
+          )}
         </section>
 
         <section className="mb-9" data-home-section="tasks">

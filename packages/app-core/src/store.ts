@@ -4633,6 +4633,13 @@ interface Store {
   showNoteInLinkPopover: (path: string) => Promise<void>
   /** Close the popover; its note is saved first when it has unsaved edits. */
   closeLinkPopover: () => void
+  /** An inline note editor (Home's today card, the Calendar's day card)
+   *  starts showing `path`: its content is read into the shared cache and
+   *  kept there while any such editor holds it. False when it cannot be read. */
+  holdInlineNote: (path: string) => Promise<boolean>
+  /** The editor let `path` go: its last edit is saved, then the cached copy
+   *  is dropped unless something else still shows it. */
+  releaseInlineNote: (path: string) => void
   /** Create a note without opening it, for the link popover to edit in place.
    *  Resolves to the new note, or null when it could not be made. */
   createNoteInPlace: (folder: NoteFolder, subpath: string, title: string) => Promise<NoteMeta | null>
@@ -5679,14 +5686,26 @@ function rememberPrefetchedPath(path: string): void {
  */
 const closingLinkPopoverPaths = new Set<string>()
 
+/**
+ * Notes an inline note editor shows outside any pane: today's note on Home
+ * and a day's note in the Calendar's day card. They edit `noteContents` the
+ * way the link popover does, so the same holds keep their buffers alive
+ * through cache prunes. Counted, since two editors may show one note.
+ */
+const inlineEditorHolds = new Map<string, number>()
+
 function linkPopoverHeldPaths(s: Pick<Store, 'linkPopover'>): string[] {
-  const held = [...closingLinkPopoverPaths]
+  const held = [...closingLinkPopoverPaths, ...inlineEditorHolds.keys()]
   if (s.linkPopover?.path) held.push(s.linkPopover.path)
   return held
 }
 
 function linkPopoverHolds(s: Pick<Store, 'linkPopover'>, path: string): boolean {
-  return s.linkPopover?.path === path || closingLinkPopoverPaths.has(path)
+  return (
+    s.linkPopover?.path === path ||
+    closingLinkPopoverPaths.has(path) ||
+    inlineEditorHolds.has(path)
+  )
 }
 
 function rewriteLinkPopover(
@@ -11842,6 +11861,41 @@ export const useStore = create<Store>((set, get) => {
     if (path) closingLinkPopoverPaths.add(path)
     set({ linkPopover: null })
     if (path) void releaseLinkPopoverNote(path)
+  },
+  holdInlineNote: async (path) => {
+    inlineEditorHolds.set(path, (inlineEditorHolds.get(path) ?? 0) + 1)
+    if (get().noteContents[path]) return true
+    let content: NoteContent
+    try {
+      content = await readNoteContent(path, get())
+    } catch (err) {
+      console.error('holdInlineNote readNote failed', err)
+      return false
+    }
+    // Let go of while the read was in flight: nothing shows it any more.
+    if (!inlineEditorHolds.has(path)) return false
+    set((s) =>
+      s.noteContents[path]
+        ? {}
+        : {
+            noteContents: { ...s.noteContents, [path]: content },
+            noteDirty: { ...s.noteDirty, [path]: false }
+          }
+    )
+    return true
+  },
+  releaseInlineNote: (path) => {
+    const count = inlineEditorHolds.get(path) ?? 0
+    if (count > 1) {
+      inlineEditorHolds.set(path, count - 1)
+      return
+    }
+    if (count === 0) return
+    inlineEditorHolds.delete(path)
+    // Held through the save, as a closing link popover is, so the debounced
+    // write still finds the buffer.
+    closingLinkPopoverPaths.add(path)
+    void releaseLinkPopoverNote(path)
   },
   createNoteInPlace: trackNoteWrite(null, async (folder, subpath, title) => {
     try {

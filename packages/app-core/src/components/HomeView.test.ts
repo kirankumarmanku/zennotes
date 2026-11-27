@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NoteMeta } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
+import { EditorView } from '@codemirror/view'
 import { useStore } from '../store'
 import { HomeView } from './HomeView'
 
@@ -222,6 +223,12 @@ describe('HomeView: the day comes first, as in the older Zotly app', () => {
   }
 
   beforeEach(() => {
+    // jsdom has no layout; CodeMirror still measures the caret.
+    Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] })
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect()
+    })
     originalState = useStore.getState()
     originalZen = (window as { zen?: unknown }).zen
     host = document.createElement('div')
@@ -251,12 +258,22 @@ describe('HomeView: the day comes first, as in the older Zotly app', () => {
   const order = (): string[] =>
     [...host.querySelectorAll('[data-home-section]')].map((s) => s.getAttribute('data-home-section') ?? '')
 
-  it("puts Today, Tasks and Meetings above Recent, and opens today's note", async () => {
+  const editorView = (): EditorView => {
+    const el = host.querySelector<HTMLElement>('[data-home-day-note] .cm-editor')
+    expect(el).not.toBeNull()
+    return EditorView.findFromDOM(el!)!
+  }
+
+  it("puts Today, Tasks and Meetings above Recent, with today's note open to write in", async () => {
     const openTodayDailyNote = vi.fn(async () => {})
     const calendarMeetings = vi.fn(async () => ({ meetings: [], failures: [] }))
-    ;(window as { zen?: unknown }).zen = { ...(originalZen as object), calendarMeetings }
+    const path = `inbox/Daily Notes/${todayIso}.md`
+    const writeNote = vi.fn(async () => ({ ...dayNote(), path }))
+    ;(window as { zen?: unknown }).zen = { ...(originalZen as object), calendarMeetings, writeNote }
     useStore.setState({
       notes: [note('Plans', 1), dayNote()],
+      noteContents: { [path]: { ...dayNote(), body: 'Pick up the keys.' } },
+      noteDirty: {},
       openTodayDailyNote,
       vaultSettings: {
         ...originalState.vaultSettings,
@@ -265,25 +282,60 @@ describe('HomeView: the day comes first, as in the older Zotly app', () => {
     })
     await render()
     expect(order()).toEqual(['day-note', 'tasks', 'meetings', 'recent'])
-    const card = host.querySelector<HTMLButtonElement>('[data-home-kind="day-note"]')!
-    expect(card.getAttribute('data-home-note-path')).toBe(`inbox/Daily Notes/${todayIso}.md`)
-    expect(card.textContent).toContain('Pick up the keys.')
-    await act(async () => card.click())
-    expect(openTodayDailyNote).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-inline-note-editor]')?.getAttribute('data-inline-note-path')).toBe(path)
+    expect(editorView().state.doc.toString()).toBe('Pick up the keys.')
     expect(host.querySelector('[data-home-section="meetings"]')?.textContent).toContain('No meetings today.')
+
+    // Typing writes the note, through the same buffer every pane edits.
+    act(() => {
+      const view = editorView()
+      view.dispatch({ changes: { from: view.state.doc.length, insert: ' Call Sam.' } })
+    })
+    expect(useStore.getState().noteContents[path]?.body).toBe('Pick up the keys. Call Sam.')
+    expect(useStore.getState().noteDirty[path]).toBe(true)
+
+    // Its arrows are the text's, not Home's row-to-row navigation.
+    const down = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+    act(() => {
+      editorView().contentDOM.dispatchEvent(down)
+    })
+    expect(document.activeElement?.closest('[data-home-item]') ?? null).toBeNull()
+
+    // The note still opens full size from the card's Open.
+    const open = host.querySelector<HTMLButtonElement>('[data-home-kind="day-note"]')!
+    expect(open.getAttribute('data-home-note-path')).toBe(path)
+    await act(async () => open.click())
+    expect(openTodayDailyNote).toHaveBeenCalledTimes(1)
+
+    // Leaving Home saves what was typed, as closing a tab does.
+    await act(async () => {
+      root.render(createElement('div'))
+    })
+    await act(async () => {})
+    expect(writeNote).toHaveBeenCalledWith(path, 'Pick up the keys. Call Sam.')
   })
 
-  it('turns daily notes on before opening today, when the vault has them off', async () => {
+  it("starts today's note right on Home, turning daily notes on first when they are off", async () => {
     const calls: string[] = []
+    const path = `inbox/Daily Notes/${todayIso}.md`
     const setVaultSettings = vi.fn(async (next: { dailyNotes: { enabled: boolean } }) => {
       calls.push(`settings:${next.dailyNotes.enabled}`)
+      useStore.setState({ vaultSettings: next as never })
       return true
     })
-    const openTodayDailyNote = vi.fn(async () => {
-      calls.push('open')
+    const ensureDailyNoteForDate = vi.fn(async () => {
+      calls.push('ensure')
+      useStore.setState({
+        notes: [note('Plans', 1), dayNote()],
+        noteContents: { [path]: { ...dayNote(), body: '## Plan\n' } },
+        noteDirty: {}
+      })
+      return dayNote()
     })
+    const openTodayDailyNote = vi.fn(async () => {})
     useStore.setState({
       setVaultSettings: setVaultSettings as never,
+      ensureDailyNoteForDate: ensureDailyNoteForDate as never,
       openTodayDailyNote,
       vaultSettings: {
         ...originalState.vaultSettings,
@@ -291,11 +343,20 @@ describe('HomeView: the day comes first, as in the older Zotly app', () => {
       }
     })
     await render()
-    const card = host.querySelector<HTMLButtonElement>('[data-home-kind="day-note"]')!
-    expect(card.textContent).toContain("Start today's note")
-    expect(card.textContent).toContain('Turns on daily notes')
-    await act(async () => card.click())
-    expect(calls).toEqual(['settings:true', 'open'])
+    const start = host.querySelector<HTMLButtonElement>('[data-home-day-start]')!
+    expect(start.textContent).toContain("Write today's note")
+    expect(start.textContent).toContain('Turns on daily notes')
+    await act(async () => start.click())
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    })
+    expect(calls).toEqual(['settings:true', 'ensure'])
+    expect(openTodayDailyNote).not.toHaveBeenCalled()
+    // The new note is on Home, its template in it, with the caret at its end.
+    const view = editorView()
+    expect(view.state.doc.toString()).toBe('## Plan\n')
+    expect(view.state.selection.main.head).toBe(view.state.doc.length)
+    expect(view.hasFocus).toBe(true)
   })
 
   it("lists today's meetings in order and opens or starts each one's note", async () => {

@@ -38,6 +38,9 @@ export const SELF_KEYED_SURFACES = [
   // The link popover: its editor and its Create button own every key, and
   // its Escape closes it rather than walking the sidebar.
   '[data-link-popover]',
+  // A note's editor inside another view (Home's today card, the Calendar's
+  // day card): typing there is writing the note, never a Vim motion.
+  '[data-inline-note-editor]',
   // A cover being repositioned: the arrows (and j/k with Vim on) move the
   // image, Enter keeps the position and Escape puts it back.
   '[data-note-cover-reposition]'
