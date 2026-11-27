@@ -258,3 +258,69 @@ describe('public editor attachment insertion', () => {
     expect(s.captureEditorInsertion(s.importer)).toBeNull()
   })
 })
+
+describe('editor commands in an embedded note editor', () => {
+  async function embeddedSetup(body = 'today') {
+    const s = await setup('pane body', 0)
+    const { embeddedNoteEditor } = await import('./lib/embedded-note-editors')
+    let inlinePath = 'Daily/2026-11-27.md'
+    const inline = new EditorView({
+      parent: document.body,
+      state: EditorState.create({
+        doc: body,
+        selection: EditorSelection.cursor(body.length),
+        extensions: [embeddedNoteEditor(() => inlinePath)]
+      })
+    })
+    views.push(inline)
+    return { ...s, inline, setInlinePath: (path: string) => { inlinePath = path } }
+  }
+
+  it('formats the focused embedded editor, not the open note', async () => {
+    const s = await embeddedSetup('today')
+    s.inline.focus()
+    expect(s.runEditorCommand('cycle-heading')).toBe(true)
+    expect(s.inline.state.doc.toString()).toBe('# today')
+    expect(s.view.state.doc.toString()).toBe('pane body')
+    s.inline.dispatch({ selection: EditorSelection.single(2, 7) })
+    expect(s.hasEditorSelection()).toBe(true)
+    expect(s.runEditorCommand('toggle-bold')).toBe(true)
+    expect(s.inline.state.doc.toString()).toBe('# **today**')
+  })
+
+  it('goes back to the open note once the embedded editor loses the focus', async () => {
+    const s = await embeddedSetup('today')
+    s.inline.focus()
+    s.inline.contentDOM.blur()
+    expect(s.runEditorCommand('cycle-heading')).toBe(true)
+    expect(s.view.state.doc.toString()).toBe('# pane body')
+    expect(s.inline.state.doc.toString()).toBe('today')
+  })
+
+  it('ignores an unregistered editor that has the focus', async () => {
+    const s = await setup('pane body', 0)
+    const stray = new EditorView({ parent: document.body, state: EditorState.create({ doc: 'x' }) })
+    views.push(stray)
+    stray.focus()
+    expect(s.runEditorCommand('cycle-heading')).toBe(true)
+    expect(s.view.state.doc.toString()).toBe('# pane body')
+    expect(stray.state.doc.toString()).toBe('x')
+  })
+
+  it('attaches into the embedded note, under that note, and goes stale if it changes', async () => {
+    const s = await embeddedSetup('today')
+    s.inline.focus()
+    const result = await s.attachFiles(s.captureEditorInsertion(s.importer)!, [file()])
+    expect(result.status).toBe('inserted')
+    expect(s.importer.importFile.mock.calls[0]![0]).toBe('Daily/2026-11-27.md')
+    expect(s.inline.state.doc.toString()).toMatch(/^today\n\n!\[\[assets\/one\.pdf\]\]\n*$/)
+    expect(s.view.state.doc.toString()).toBe('pane body')
+
+    const target = s.captureEditorInsertion(s.importer)!
+    s.setInlinePath('Daily/2026-11-28.md')
+    const stale = await s.attachFiles(target, [file('two.pdf')])
+    expect(stale.status).toBe('stale')
+    expect(s.importer.importFile).toHaveBeenCalledTimes(1)
+    expect(s.inline.state.doc.toString()).not.toContain('two.pdf')
+  })
+})

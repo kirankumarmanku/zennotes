@@ -46,6 +46,7 @@ import { getKeymapBinding } from '../lib/keymaps'
 import { keyBindingsFor } from '../lib/vim-half-page-keymap'
 import { openLinkPopoverAtCursor } from '../lib/link-popover-open'
 import { buildReferenceKeymap, paperHighlight } from './PinnedReferencePane'
+import { embeddedNoteEditor } from '../lib/embedded-note-editors'
 
 type KeymapOverrides = ReturnType<typeof useStore.getState>['keymapOverrides']
 
@@ -68,6 +69,8 @@ export function buildEmbeddedNoteExtensions({
   const s0 = useStore.getState()
   return [
     noteEditingLockExtension(() => ({ vault: useStore.getState().vault, path: getPath() })),
+    // So the phone's formatting row and attach button reach this editor.
+    embeddedNoteEditor(getPath),
     appMarkdownSnippetExtension(),
     sourceRevealExtension,
     s0.vimMode ? vim() : [],

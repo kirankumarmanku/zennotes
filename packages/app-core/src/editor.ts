@@ -8,6 +8,7 @@ import { formatImportedAssetsForInsertion } from './lib/editor-drops'
 import { noteEditorMatches } from './lib/note-editor-context'
 import { runNoteEditorCommand } from './lib/editor-commands'
 import { installNoteEditorHost, requestNoteEditorReveal } from './lib/editor-host'
+import { embeddedNoteEditorPath, focusedEmbeddedNoteEditor } from './lib/embedded-note-editors'
 
 export interface EditorBounds {
   readonly top: number
@@ -116,15 +117,36 @@ function currentNoteEditor(): { view: EditorView; path: string; vault: VaultInfo
   return { view, path, vault }
 }
 
-/** Run immediately against the active note. False means unavailable or not handled. */
-export function runEditorCommand(command: EditorCommand): boolean {
+/**
+ * Where a host's command lands: a note editor embedded in another view (Home's
+ * day note, the Calendar's day card, the link popover) while it holds the
+ * focus, otherwise the active pane's note.
+ */
+function commandTarget(): {
+  view: EditorView
+  path: string
+  vault: VaultInfo
+  embedded: boolean
+} | null {
+  const inline = focusedEmbeddedNoteEditor()
+  if (inline) {
+    const vault = useStore.getState().vault
+    return vault ? { ...inline, vault, embedded: true } : null
+  }
   const editor = currentNoteEditor()
+  return editor ? { ...editor, embedded: false } : null
+}
+
+/** Run immediately against the focused embedded note or the active note.
+ *  False means unavailable or not handled. */
+export function runEditorCommand(command: EditorCommand): boolean {
+  const editor = commandTarget()
   return editor ? runNoteEditorCommand(editor.view, command) : false
 }
 
 /** Inspect text selections, including in read-only notes, without exposing them. */
 export function hasEditorSelection(): boolean {
-  const editor = currentNoteEditor()
+  const editor = commandTarget()
   return editor ? editor.view.state.selection.ranges.some((range) => !range.empty) : false
 }
 
@@ -154,6 +176,8 @@ interface InsertionContext {
   selection: EditorSelection
   importer: EditorAssetImporter
   started: boolean
+  /** Captured in an embedded editor rather than the active pane. */
+  embedded: boolean
 }
 const insertions = new WeakMap<EditorInsertionTarget, InsertionContext>()
 
@@ -170,9 +194,9 @@ export function captureEditorInsertion(
   importer: EditorAssetImporter,
   options: { requireFocus?: boolean } = {}
 ): EditorInsertionTarget | null {
-  const editor = currentNoteEditor()
+  const editor = commandTarget()
   if (!editor) return null
-  const { view, path, vault } = editor
+  const { view, path, vault, embedded } = editor
   if (view.state.readOnly || (options.requireFocus && !view.hasFocus) || !hostIsCurrent(importer))
     return null
   const target = Object.freeze({}) as EditorInsertionTarget
@@ -183,7 +207,8 @@ export function captureEditorInsertion(
     document: view.state.doc,
     selection: view.state.selection,
     importer,
-    started: false
+    started: false,
+    embedded
   })
   return target
 }
@@ -196,6 +221,17 @@ export function cancelEditorInsertion(target: EditorInsertionTarget): void {
 function isCurrent(target: EditorInsertionTarget, context: InsertionContext): boolean {
   const state = useStore.getState()
   const { view } = context
+  if (context.embedded)
+    return (
+      insertions.get(target) === context &&
+      state.vault === context.vault &&
+      view.dom.isConnected &&
+      embeddedNoteEditorPath(view) === context.path &&
+      !view.state.readOnly &&
+      view.state.doc === context.document &&
+      view.state.selection.eq(context.selection) &&
+      hostIsCurrent(context.importer)
+    )
   return (
     insertions.get(target) === context &&
     state.vault === context.vault &&
