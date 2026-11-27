@@ -1,0 +1,137 @@
+name: Zotly Mac
+
+# Kiran's signed and notarized ZenNotes for macOS, built the way ZotlyApp's
+# scripts/release-macos.sh builds Zotly: Developer ID certificate, hardened
+# runtime, notarytool with the App Store Connect key, app and .dmg stapled.
+#
+# Run it by hand from the Actions tab (the .dmg lands as a workflow artifact),
+# or push a zotly-mac-v* tag to also publish a GitHub release on this fork.
+# Upstream's release.yml (v* tags) needs upstream's certificates; this one
+# does not use them.
+#
+# Secrets: DEVELOPER_ID_CERT_P12_BASE64, DEVELOPER_ID_CERT_PASSWORD,
+# ASC_KEY_P8_BASE64. Variables: ASC_KEY_ID, ASC_ISSUER_ID.
+# docs/how-to/zotly-mac-release.md says where each comes from.
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Architecture"
+        required: true
+        type: choice
+        default: arm64
+        options:
+          - arm64
+          - x64
+          - both
+  push:
+    tags:
+      - "zotly-mac-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zotly-mac-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Sign and notarize
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      NODE_OPTIONS: "--max-old-space-size=12288"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          # The build number counts commits, as ZotlyApp's does.
+          fetch-depth: 0
+
+      - name: Check signing secrets
+        env:
+          DEVELOPER_ID_CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+        run: |
+          missing=0
+          for name in DEVELOPER_ID_CERT_P12_BASE64 DEVELOPER_ID_CERT_PASSWORD ASC_KEY_P8_BASE64 ASC_KEY_ID ASC_ISSUER_ID; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing ${name}. See docs/how-to/zotly-mac-release.md."
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Carry the electron-builder keychain fix
+        # Same step as release.yml: electron-builder 26.15/26.16 unlock their
+        # temporary keychain with the wrong password on current runners.
+        run: node tooling/scripts/patch-electron-builder-keychain.mjs
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+        run: |
+          dir="${RUNNER_TEMP}/asc"
+          mkdir -p "${dir}"
+          umask 077
+          printf '%s' "${ASC_KEY_P8_BASE64}" | base64 --decode > "${dir}/AuthKey_${ASC_KEY_ID}.p8"
+          echo "ASC_KEY_P8=${dir}/AuthKey_${ASC_KEY_ID}.p8" >> "${GITHUB_ENV}"
+
+      - name: Build, sign and notarize
+        env:
+          CSC_LINK: ${{ secrets.DEVELOPER_ID_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+          ASC_KEY_ID: ${{ vars.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ vars.ASC_ISSUER_ID }}
+          ZOTLY_ARCH: ${{ inputs.arch || 'both' }}
+        run: ./tooling/scripts/zotly-mac-release.sh
+
+      - name: Remove the App Store Connect key
+        if: always()
+        run: rm -rf "${RUNNER_TEMP}/asc"
+
+      - name: Collect the release files
+        run: |
+          mkdir -p zotly-mac
+          find dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.zip.blockmap' -o -name 'latest-mac.yml' \) \
+            -exec mv {} zotly-mac/ \;
+          ls -l zotly-mac
+
+      - name: Keep the build as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zotly-mac
+          path: zotly-mac/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/zotly-mac-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "ZenNotes for Mac (Zotly) ${TAG#zotly-mac-v}" \
+              --notes "Signed with Developer ID and notarized. Download the .dmg for your Mac (arm64 for Apple silicon)."
+          fi
+          gh release upload "${TAG}" zotly-mac/* --repo "${GITHUB_REPOSITORY}" --clobber

@@ -36,6 +36,7 @@
     "test:run": "turbo run test:run",
     "test:shared-packages": "node tooling/scripts/test-shared-packages.mjs",
     "test:web-dist-lock": "node --test tooling/scripts/web-dist-lock.test.mjs",
+    "test:zotly-mac": "node --test tooling/scripts/zotly-mac-release.test.mjs",
     "artifact:web": "node tooling/scripts/pack-web-artifact.mjs",
     "artifact:cloud-web": "node tooling/scripts/pack-web-artifact.mjs --target=cloud-web",
     "test:web-artifact": "node --test tooling/scripts/pack-web-artifact.test.mjs",
