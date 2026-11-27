@@ -102,7 +102,7 @@ describe('HomeView: opening a note hands the keyboard to the editor (#863)', () 
   })
 })
 
-describe('HomeView: Today leaves empty tasks out (#1026)', () => {
+describe('HomeView: Tasks leaves empty tasks out (#1026)', () => {
   let host: HTMLDivElement
   let root: Root
   let originalState: ReturnType<typeof useStore.getState>
@@ -166,7 +166,7 @@ describe('HomeView: Today leaves empty tasks out (#1026)', () => {
     useStore.setState(originalState, true)
   })
 
-  const section = (): Element => host.querySelector('[data-home-section="today"]')!
+  const section = (): Element => host.querySelector('[data-home-section="tasks"]')!
   const rows = (): string[] =>
     [...section().querySelectorAll('li')].map((li) => li.textContent ?? '')
 
@@ -199,5 +199,140 @@ describe('HomeView: Today leaves empty tasks out (#1026)', () => {
     const section = host.querySelector('[data-home-section="recent"]')
     expect(section?.textContent).not.toContain('Recent')
     expect(section?.textContent).toContain('New note')
+  })
+})
+
+describe('HomeView: the day comes first, as in the older Zotly app', () => {
+  let host: HTMLDivElement
+  let root: Root
+  let originalState: ReturnType<typeof useStore.getState>
+  let originalZen: unknown
+
+  function iso(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  const todayIso = iso(new Date())
+
+  function dayNote(): NoteMeta {
+    return {
+      ...note(todayIso, 5),
+      path: `inbox/Daily Notes/${todayIso}.md`,
+      excerpt: 'Pick up the keys. Call Sam about Friday.'
+    }
+  }
+
+  beforeEach(() => {
+    originalState = useStore.getState()
+    originalZen = (window as { zen?: unknown }).zen
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    useStore.setState({
+      notes: [note('Plans', 1)],
+      folders: [],
+      vaultTasks: [],
+      tasksLoading: false,
+      refreshTasks: vi.fn(async () => {})
+    })
+  })
+
+  afterEach(() => {
+    act(() => root.unmount())
+    host.remove()
+    ;(window as { zen?: unknown }).zen = originalZen
+    useStore.setState(originalState, true)
+  })
+
+  const render = async (): Promise<void> => {
+    await act(async () => {
+      root.render(createElement(HomeView, { sidebarOpen: true, onShowSidebar: () => {} }))
+    })
+  }
+  const order = (): string[] =>
+    [...host.querySelectorAll('[data-home-section]')].map((s) => s.getAttribute('data-home-section') ?? '')
+
+  it("puts Today, Tasks and Meetings above Recent, and opens today's note", async () => {
+    const openTodayDailyNote = vi.fn(async () => {})
+    const calendarMeetings = vi.fn(async () => ({ meetings: [], failures: [] }))
+    ;(window as { zen?: unknown }).zen = { ...(originalZen as object), calendarMeetings }
+    useStore.setState({
+      notes: [note('Plans', 1), dayNote()],
+      openTodayDailyNote,
+      vaultSettings: {
+        ...originalState.vaultSettings,
+        dailyNotes: { ...originalState.vaultSettings.dailyNotes, enabled: true }
+      }
+    })
+    await render()
+    expect(order()).toEqual(['day-note', 'tasks', 'meetings', 'recent'])
+    const card = host.querySelector<HTMLButtonElement>('[data-home-kind="day-note"]')!
+    expect(card.getAttribute('data-home-note-path')).toBe(`inbox/Daily Notes/${todayIso}.md`)
+    expect(card.textContent).toContain('Pick up the keys.')
+    await act(async () => card.click())
+    expect(openTodayDailyNote).toHaveBeenCalledTimes(1)
+    expect(host.querySelector('[data-home-section="meetings"]')?.textContent).toContain('No meetings today.')
+  })
+
+  it('turns daily notes on before opening today, when the vault has them off', async () => {
+    const calls: string[] = []
+    const setVaultSettings = vi.fn(async (next: { dailyNotes: { enabled: boolean } }) => {
+      calls.push(`settings:${next.dailyNotes.enabled}`)
+      return true
+    })
+    const openTodayDailyNote = vi.fn(async () => {
+      calls.push('open')
+    })
+    useStore.setState({
+      setVaultSettings: setVaultSettings as never,
+      openTodayDailyNote,
+      vaultSettings: {
+        ...originalState.vaultSettings,
+        dailyNotes: { ...originalState.vaultSettings.dailyNotes, enabled: false }
+      }
+    })
+    await render()
+    const card = host.querySelector<HTMLButtonElement>('[data-home-kind="day-note"]')!
+    expect(card.textContent).toContain("Start today's note")
+    expect(card.textContent).toContain('Turns on daily notes')
+    await act(async () => card.click())
+    expect(calls).toEqual(['settings:true', 'open'])
+  })
+
+  it("lists today's meetings in order and opens or starts each one's note", async () => {
+    const at = (h: number): string => {
+      const d = new Date()
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h).toISOString()
+    }
+    const base = {
+      location: null,
+      description: null,
+      url: null,
+      organizer: null,
+      attendees: [],
+      recurring: false,
+      allDay: false,
+      feedId: 'f',
+      feedName: 'Work'
+    }
+    const meetings = [
+      { ...base, uid: 'b', key: 'b', title: 'Design review', start: at(15), end: at(16) },
+      { ...base, uid: 'a', key: 'a', title: 'Standup', start: at(9), end: at(10) }
+    ]
+    const calendarMeetings = vi.fn(async () => ({ meetings, failures: [] }))
+    ;(window as { zen?: unknown }).zen = { ...(originalZen as object), calendarMeetings }
+    const openMeetingNote = vi.fn(async () => null)
+    useStore.setState({ openMeetingNote })
+    await render()
+    const rows = [...host.querySelectorAll<HTMLButtonElement>('[data-home-kind="meeting"]')]
+    expect(rows.map((r) => r.getAttribute('data-home-meeting'))).toEqual(['a', 'b'])
+    expect(rows[0]!.textContent).toContain('Standup')
+    await act(async () => rows[1]!.click())
+    expect(openMeetingNote).toHaveBeenCalledWith(expect.objectContaining({ key: 'b' }))
+  })
+
+  it('leaves Meetings out where the host reads no calendars', async () => {
+    ;(window as { zen?: unknown }).zen = { ...(originalZen as object), calendarMeetings: undefined }
+    await render()
+    expect(order()).toEqual(['day-note', 'tasks', 'recent'])
   })
 })

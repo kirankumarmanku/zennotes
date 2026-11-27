@@ -1,16 +1,31 @@
 import { getKeymapDisplay } from '../lib/keymaps'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { NoteMeta } from '@shared/ipc'
 import { filterTasksForDisplay, inferDailyTaskDueDates, type VaultTask } from '@shared/tasks'
 import { useStore } from '../store'
 import { computeTasksRender } from '../lib/tasks-filter'
+import {
+  calendarFeedsSupported,
+  findMeetingNote,
+  meetingTimeLabel,
+  useCalendarMeetings
+} from '../lib/calendar-meetings'
+import {
+  dailyNotePreview,
+  daySummary,
+  meetingsAhead,
+  meetingsOnDay,
+  msUntilNextDay
+} from '../lib/home-today'
 import { withoutEmptyTasks } from '../lib/empty-tasks'
 import { focusEditorNormalMode } from '../lib/editor-focus'
 import { InlineMarkdown } from '../lib/inline-markdown'
 import { getSystemFolderLabel } from '../lib/system-folder-labels'
 import {
   buildDailyNoteDateByPath,
+  findDailyNoteForDate,
   isPrimaryNotesAtRoot,
+  noteTitleForDate,
   noteFolderSubpath,
   resolveFavoriteItems,
   type FavoriteItem
@@ -63,8 +78,10 @@ function timeAgo(ts: number, now: number): string {
   return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-/** A light landing view shown when no note is open: the few most recently
- *  edited notes, the vault's favorites, plus the open tasks for today.
+/** A light landing view shown when no note is open, laid out as the older
+ *  Zotly app's home was: the day first (today's daily note, the tasks due
+ *  today or overdue, today's meetings), then the few most recently edited
+ *  notes and the vault's favorites.
  *  Keyboard: ↑/↓ (and j/k in vim mode) move between rows, Enter opens. */
 export function HomeView({
   sidebarOpen,
@@ -98,6 +115,8 @@ export function HomeView({
   const setTemplatePaletteOpen = useStore((s) => s.setTemplatePaletteOpen)
   const openTodayDailyNote = useStore((s) => s.openTodayDailyNote)
   const openWeeklyNoteForDate = useStore((s) => s.openWeeklyNoteForDate)
+  const openMeetingNote = useStore((s) => s.openMeetingNote)
+  const setVaultSettings = useStore((s) => s.setVaultSettings)
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -167,8 +186,55 @@ export function HomeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // One clock read per mount drives both the greeting and the relative stamps.
-  const now = useMemo(() => Date.now(), [])
+  // One clock read drives the greeting, the day shown and the relative
+  // stamps. It is read again when the day turns over, so a Home left open
+  // overnight (or a phone brought back the next morning) shows the new day.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setTimeout(() => setNow(Date.now()), msUntilNextDay(new Date(now)))
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return
+      if (noteTitleForDate(new Date()) !== noteTitleForDate(new Date(now))) setNow(Date.now())
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [now])
+  const todayDate = useMemo(() => new Date(now), [now])
+
+  // Today's daily note, where the vault keeps daily notes (Inbox/Daily Notes
+  // by default, which is also where the older Zotly app's day notes land).
+  const dailyNotesOn = !!vaultSettings?.dailyNotes?.enabled
+  const dayNote = useMemo<NoteMeta | null>(
+    () => (dailyNotesOn ? findDailyNoteForDate(notes, vaultSettings, todayDate) : null),
+    [dailyNotesOn, notes, vaultSettings, todayDate]
+  )
+  const openDayNote = useCallback(async (): Promise<void> => {
+    // Home's Today card is the way in to the day, so it turns daily notes on
+    // for a vault that has them off (the card says so) and then opens today's.
+    if (!useStore.getState().vaultSettings?.dailyNotes?.enabled) {
+      const current = useStore.getState().vaultSettings
+      const saved = await setVaultSettings({
+        ...current,
+        dailyNotes: { ...current.dailyNotes, enabled: true }
+      })
+      if (!saved) return
+    }
+    await openTodayDailyNote()
+  }, [setVaultSettings, openTodayDailyNote])
+
+  // Today's meetings from the calendars this vault shows (Settings > Vault >
+  // Calendars). Hosts that read no calendars leave the section out.
+  const showMeetings = calendarFeedsSupported()
+  const calendar = useCalendarMeetings(todayDate, todayDate)
+  const dayMeetings = useMemo(
+    () => meetingsOnDay(calendar.meetings, todayDate),
+    [calendar.meetings, todayDate]
+  )
 
   const recent = useMemo<NoteMeta[]>(
     () =>
@@ -248,6 +314,11 @@ export function HomeView({
 
   const visibleTasks = today.slice(0, MAX_TASKS)
   const hiddenTaskCount = today.length - visibleTasks.length
+  const summary = daySummary({
+    openTasks: today.filter((task) => !task.checked).length,
+    overdue: overdueCount,
+    meetingsAhead: showMeetings ? meetingsAhead(dayMeetings, new Date()) : 0
+  })
 
   // Focus the view on mount so keyboard navigation works without a click.
   useEffect(() => {
@@ -297,6 +368,9 @@ export function HomeView({
               {greetingFor(new Date(now))}
             </h1>
             <p className="mt-1 text-sm text-ink-400">{dateLine}</p>
+            <p className="mt-0.5 text-sm text-ink-500" data-home-summary>
+              {summary}
+            </p>
           </div>
           {!sidebarOpen && (
             <button
@@ -324,6 +398,169 @@ export function HomeView({
             </button>
           ))}
         </div>
+
+        <section className="mb-9" data-home-section="day-note">
+          <SectionLabel icon={<CalendarIcon width={13} height={13} />} text="Today" />
+          <ul className="mt-1.5 space-y-0.5">
+            <li>
+              <button
+                type="button"
+                data-home-item
+                data-home-kind="day-note"
+                {...(dayNote ? { 'data-home-note-path': dayNote.path } : {})}
+                onClick={() => void openDayNote()}
+                className="group flex w-full flex-col items-start gap-0.5 rounded-lg border border-paper-300/70 bg-paper-100/60 px-3 py-2.5 text-left transition-colors hover:bg-paper-200/60 focus:bg-paper-200/70 focus:outline-none"
+              >
+                <span className="flex w-full items-center gap-2 text-sm font-medium text-ink-800">
+                  <span className="min-w-0 flex-1 truncate">
+                    {dayNote ? dayNote.title || 'Today' : "Start today's note"}
+                  </span>
+                  <ArrowUpRightIcon
+                    width={12}
+                    height={12}
+                    className="shrink-0 text-ink-400 opacity-0 group-hover:opacity-100"
+                  />
+                </span>
+                <span className="w-full text-xs text-ink-400" data-home-day-preview>
+                  {dayNote
+                    ? dailyNotePreview(dayNote.excerpt) || 'Nothing written yet today.'
+                    : dailyNotesOn
+                      ? 'A note for today, in Daily Notes.'
+                      : 'Turns on daily notes for this vault, then opens today\'s.'}
+                </span>
+              </button>
+            </li>
+          </ul>
+        </section>
+
+        <section className="mb-9" data-home-section="tasks">
+          <SectionLabel
+            icon={<CheckSquareIcon width={13} height={13} />}
+            text="Tasks"
+            trailing={
+              overdueCount > 0 ? (
+                <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-xs font-medium text-danger">
+                  {overdueCount} overdue
+                </span>
+              ) : null
+            }
+          />
+          {visibleTasks.length > 0 ? (
+            <ul className="mt-1.5 space-y-0.5">
+              {visibleTasks.map((task) => (
+                <li
+                  key={task.id}
+                  className="group flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-paper-200/60"
+                >
+                  <button
+                    type="button"
+                    aria-label={task.checked ? 'Mark not done' : 'Mark done'}
+                    onClick={() => void toggleTaskFromList(task)}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-paper-400 text-accent transition-colors hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  >
+                    {task.checked && <CheckSquareIcon width={12} height={12} />}
+                  </button>
+                  <button
+                    type="button"
+                    data-home-item
+                    onClick={() => void openTaskAt(task)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none"
+                  >
+                    <InlineMarkdown
+                      text={task.content || task.rawText}
+                      interactiveLinks={false}
+                      className="min-w-0 flex-1 truncate text-sm text-ink-800"
+                    />
+                    <span className="shrink-0 truncate text-xs text-ink-400">{task.noteTitle}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : tasksLoading ? (
+            <EmptyHint text="Loading tasks…" />
+          ) : (
+            <EmptyHint text="No open tasks. All clear." />
+          )}
+          {hiddenTaskCount > 0 && (
+            <button
+              type="button"
+              data-home-item
+              onClick={() => void openTasksView()}
+              className="mt-2 inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs text-ink-400 transition-colors hover:text-ink-700 focus:text-ink-700 focus:outline-none"
+            >
+              <span>
+                +{hiddenTaskCount} more {hiddenTaskCount === 1 ? 'task' : 'tasks'}
+              </span>
+              <ArrowUpRightIcon width={12} height={12} />
+            </button>
+          )}
+        </section>
+        {showMeetings && (
+          <section className="mb-9" data-home-section="meetings">
+            <SectionLabel
+              icon={<CalendarIcon width={13} height={13} />}
+              text="Meetings"
+              trailing={
+                dayMeetings.length > 0 ? (
+                  <span className="text-xs text-ink-400">{dayMeetings.length}</span>
+                ) : null
+              }
+            />
+            {dayMeetings.length > 0 ? (
+              <ul className="mt-1.5 space-y-0.5">
+                {dayMeetings.map((meeting) => {
+                  const existing = findMeetingNote(notes, vaultSettings, meeting)
+                  const past = !meeting.allDay && Date.parse(meeting.end) < now
+                  return (
+                    <li key={`${meeting.feedId}:${meeting.key}`}>
+                      <button
+                        type="button"
+                        data-home-item
+                        data-home-kind="meeting"
+                        data-home-meeting={meeting.key}
+                        {...(existing ? { 'data-home-note-path': existing.path } : {})}
+                        onClick={() => void openMeetingNote(meeting)}
+                        title={existing ? 'Open the meeting note' : 'Start a meeting note'}
+                        className="group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-paper-200/60 focus:bg-paper-200/70 focus:outline-none"
+                      >
+                        <span className="w-16 shrink-0 tabular-nums text-xs text-ink-400">
+                          {meetingTimeLabel(meeting)}
+                        </span>
+                        <span
+                          className={[
+                            'min-w-0 flex-1 truncate text-sm',
+                            past ? 'text-ink-400' : 'text-ink-800'
+                          ].join(' ')}
+                        >
+                          {meeting.title || 'Untitled meeting'}
+                        </span>
+                        <span
+                          className={[
+                            'shrink-0 text-xs',
+                            existing ? 'text-accent' : 'text-ink-400 opacity-0 group-hover:opacity-100'
+                          ].join(' ')}
+                        >
+                          {existing ? 'Note' : '+ Note'}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : calendar.loading ? (
+              <EmptyHint text="Loading meetings…" />
+            ) : (
+              <EmptyHint text="No meetings today." />
+            )}
+            {calendar.failures.length > 0 && (
+              <p className="mt-1 px-3 text-xs text-ink-400" data-home-meeting-failures>
+                {calendar.failures.length === 1
+                  ? `Couldn't read ${calendar.failures[0]!.feedName}.`
+                  : `Couldn't read ${calendar.failures.length} calendars.`}
+              </p>
+            )}
+          </section>
+        )}
 
         <section className="mb-9" data-home-section="recent">
           {recent.length > 0 && (
@@ -452,68 +689,6 @@ export function HomeView({
           </section>
         )}
 
-        <section data-home-section="today">
-          <SectionLabel
-            icon={<CheckSquareIcon width={13} height={13} />}
-            text="Today"
-            trailing={
-              overdueCount > 0 ? (
-                <span className="rounded-md bg-danger/10 px-1.5 py-0.5 text-xs font-medium text-danger">
-                  {overdueCount} overdue
-                </span>
-              ) : null
-            }
-          />
-          {visibleTasks.length > 0 ? (
-            <ul className="mt-1.5 space-y-0.5">
-              {visibleTasks.map((task) => (
-                <li
-                  key={task.id}
-                  className="group flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors hover:bg-paper-200/60"
-                >
-                  <button
-                    type="button"
-                    aria-label={task.checked ? 'Mark not done' : 'Mark done'}
-                    onClick={() => void toggleTaskFromList(task)}
-                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-paper-400 text-accent transition-colors hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  >
-                    {task.checked && <CheckSquareIcon width={12} height={12} />}
-                  </button>
-                  <button
-                    type="button"
-                    data-home-item
-                    onClick={() => void openTaskAt(task)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none"
-                  >
-                    <InlineMarkdown
-                      text={task.content || task.rawText}
-                      interactiveLinks={false}
-                      className="min-w-0 flex-1 truncate text-sm text-ink-800"
-                    />
-                    <span className="shrink-0 truncate text-xs text-ink-400">{task.noteTitle}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : tasksLoading ? (
-            <EmptyHint text="Loading tasks…" />
-          ) : (
-            <EmptyHint text="No open tasks. All clear." />
-          )}
-          {hiddenTaskCount > 0 && (
-            <button
-              type="button"
-              data-home-item
-              onClick={() => void openTasksView()}
-              className="mt-2 inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs text-ink-400 transition-colors hover:text-ink-700 focus:text-ink-700 focus:outline-none"
-            >
-              <span>
-                +{hiddenTaskCount} more {hiddenTaskCount === 1 ? 'task' : 'tasks'}
-              </span>
-              <ArrowUpRightIcon width={12} height={12} />
-            </button>
-          )}
-        </section>
       </div>
     </div>
   )
