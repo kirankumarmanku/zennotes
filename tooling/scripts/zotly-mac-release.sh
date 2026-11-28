@@ -56,7 +56,6 @@ else
 	if [ -n "${CSC_LINK:-}" ]; then
 		[ -n "${CSC_KEY_PASSWORD:-}" ] || { echo "CSC_LINK is set but CSC_KEY_PASSWORD is not." >&2; exit 1; }
 		echo "==> Signing identity: the Developer ID certificate in CSC_LINK"
-		export CSC_IDENTITY_AUTO_DISCOVERY=false
 	else
 		IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
 			| grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/' || true)"
